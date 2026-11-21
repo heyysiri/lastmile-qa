@@ -8,10 +8,11 @@ import OpenAI from 'openai';
 import { z } from 'zod';
 import {
   ProjectCommandsSchema, type Project, type ProjectRepair, type SourceReference, type ProjectRepairRuntime, type ProjectRun,
-  type ProjectSecrets, type ProjectTesterResult,
+  type ProjectSecrets, type ProjectTesterResult, type ProjectContextInvestigation,
 } from '@lastmile/contracts/projects';
 import { hashValue } from './artifacts';
 import { applyRepairPatch, copyFrozenSource, createRepairPatch, hashBytes, hashSourceTree, readSourceText } from './repair-workspace';
+import { compareProjectReplayResults, createNormalNetworkVariant, hasNetworkInvestigation, validateProjectContextInvestigation } from './project-context-investigation';
 import {repositorySourceKind,sourceReference} from './repository-index';
 
 type Options = {
@@ -246,26 +247,9 @@ function replayChecks(source: ProjectRun, replay: ProjectRun) {
     || new Set(replay.results.map(result => result.journey.id)).size !== replay.results.length) {
     throw new RepairError('Replay did not complete the frozen cases without model calls');
   }
-  return source.results.flatMap(original => {
-    const result = replay.results.find(item => item.journey.id === original.journey.id);
-    if (!result || !checkIds(result) || !same(result.tester, original.tester) || !same(result.journey, original.journey)
-      || result.run.status !== 'completed' || result.run.evidence?.modelCalls !== 0 || result.run.evidence.replayCompatible !== true
-      || result.checks.some(check => !['passed', 'failed'].includes(check.status))
-      || result.run.verdict !== (result.checks.some(check => check.status === 'failed') ? 'failed' : 'passed')) {
-      throw new RepairError('Replay changed a frozen tester, journey, or conclusive check');
-    }
-    return original.checks.map(before => {
-      const after = result.checks.find(check => check.id === before.id)!;
-      const identity = ({ id, expected, label, phase, basis, sources }: typeof before) => ({ id, expected, label, phase, basis, sources });
-      const checkKind=original.journey.checks.find(check=>check.id===before.id)!.kind;
-      const expectedActual=checkKind==='visible'?after.expected:String(after.expected);
-      if (!same(identity(before), identity(after))
-        || (after.status === 'passed' && after.expected !== undefined && !same(after.actual, expectedActual))) {
-        throw new RepairError('Replay changed a frozen check expectation or returned an inconsistent outcome');
-      }
-      return { before, after };
-    });
-  });
+  try { return compareProjectReplayResults(source, replay.results); } catch (error) {
+    throw new RepairError((error as Error).message);
+  }
 }
 
 async function loopbackPort(): Promise<number> {
@@ -437,6 +421,7 @@ export function createProjectRepairRuntime(options: Options): ProjectRepairRunti
   return {
     async prepare(job, secrets) {
       let pending: string | undefined;
+      let investigation: ProjectContextInvestigation | undefined;
       try {
         validateBaseline(job.sourceRun);
         const commands = ProjectCommandsSchema.parse(job.project.commands);
@@ -482,9 +467,9 @@ export function createProjectRepairRuntime(options: Options): ProjectRepairRunti
         const input = {
           requirements: project.requirements,
           cases: source.results.map(({ journey, tester, checks, run }) => ({
-            id: journey.id, goal: journey.goal, role: tester.role,
-            checks: checks.map(({ id, label, phase, basis, expected, actual, status, sources }) => ({
-              id, label, phase, basis, expected, actual, status,
+            id: journey.id, goal: journey.goal, role: tester.role, context: tester.context, stages: journey.stages,
+            checks: checks.map(({ id, label, phase, atStageStart, basis, expected, actual, status, sources }) => ({
+              id, label, phase, atStageStart, basis, expected, actual, status,
               citations: sources.map(({ path, startLine, endLine }) => ({ path, startLine, endLine })),
             })),
             // Checks already contain the independent outcomes. Repeated whole-page
@@ -503,6 +488,26 @@ export function createProjectRepairRuntime(options: Options): ProjectRepairRunti
         if (replayChecks(source, baseline).some(({ before, after }) => before.status !== after.status || !same(before.actual, after.actual))) {
           throw new RepairError('Baseline replay did not reproduce the frozen failures and passing controls');
         }
+        if (hasNetworkInvestigation(source)) {
+          const trials: ProjectContextInvestigation['trials'] = [{ condition: 'original', repeat: 1, results: baseline.results }];
+          const normal = createNormalNetworkVariant(source);
+          for (const [condition, repeat] of [['original', 2], ['normal_network', 1], ['normal_network', 2]] as const) {
+            const variant = condition === 'original' ? source : normal;
+            let results: ProjectTesterResult[] = [];
+            try {
+              const trial = await replayTrial(base, pending, { ...frozen, source: variant }, secrets);
+              results = trial.results;
+              // Retain incompatible results for inspection, but never let a bad envelope support a trigger.
+              if (trial.status !== 'completed' || trial.error || trial.projectId !== source.projectId || trial.metrics.modelCalls !== 0) {
+                for (const result of results) if (result.run.evidence) result.run.evidence.replayCompatible = false;
+              }
+            } catch { /* Isolation failures are unresolved evidence, not a veto of the conclusive baseline. */ }
+            trials.push({ condition, repeat, results });
+          }
+          investigation = validateProjectContextInvestigation(source, {
+            factor: 'network', outcome: 'unresolved', message: '', trials,
+          });
+        }
         const proposed = await during(60_000, signal => {
           const request: unknown = JSON.parse(packet);
           return options.propose ? options.propose(request, signal) : proposeWithModel(options, request, signal);
@@ -514,9 +519,9 @@ export function createProjectRepairRuntime(options: Options): ProjectRepairRunti
         await writeFile(join(pending, 'frozen.json'), JSON.stringify({ body, integrity: hashValue(body) }), { mode: 0o600 });
         await rename(pending, join(base, job.id));
         pending = undefined;
-        return { patch, sourceVersion: manifest.version };
+        return { patch, sourceVersion: manifest.version, ...(investigation && { investigation }) };
       } catch (error) {
-        return { error: error instanceof RepairError ? error.message : 'Could not prepare the private repair snapshot or proposal' };
+        return { error: error instanceof RepairError ? error.message : 'Could not prepare the private repair snapshot or proposal', ...(investigation && { investigation }) };
       } finally {
         if (pending) await rm(pending, { recursive: true, force: true });
       }

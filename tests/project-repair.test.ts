@@ -230,7 +230,7 @@ it.each([
   expect(f.propose).toHaveBeenCalledTimes(1);
 });
 
-it.each(['missing check', 'changed expectation', 'changed role', 'model call', 'incompatible replay'] as const)(
+it.each(['missing check', 'changed expectation', 'changed stage checkpoint', 'changed role', 'model call', 'incompatible replay'] as const)(
   'returns inconclusive when verification has a %s', async scenario => {
     const f = await fixture();
     const job = await f.reviewed();
@@ -239,6 +239,7 @@ it.each(['missing check', 'changed expectation', 'changed role', 'model call', '
       const [first] = run.results;
       if (scenario === 'missing check') first.checks.pop();
       if (scenario === 'changed expectation') first.checks[0].expected = 'changed';
+      if (scenario === 'changed stage checkpoint') first.checks[0].atStageStart = 'return';
       if (scenario === 'changed role') first.tester.role = 'changed';
       if (scenario === 'model call') first.run.evidence!.modelCalls = 1;
       if (scenario === 'incompatible replay') first.run.evidence!.replayCompatible = false;
@@ -471,4 +472,69 @@ it.each([500,400])('retries only transient coding provider failures (HTTP %s)',a
   if(status===500){expect(result.error).toBeUndefined();expect(result.patch).toBeDefined();expect(calls).toBe(2);}
   else{expect(result.error).toBeDefined();expect(calls).toBe(1);}
  }finally{vi.unstubAllGlobals();}
+});
+
+it('runs four serial isolated network trials and preserves conditions in the coding packet', async () => {
+  const f = await fixture();
+  const failed = f.job.sourceRun.results[0];
+  failed.tester.context.network = { mode: 'request_delay', delayMs: 20, pathPrefix: '/'  };
+  failed.run.context.network = { mode: 'request_delay', delayMs: 20, pathPrefix: '/'  };
+  for (const result of f.job.sourceRun.results) result.run.evidence = {
+    buildId: 'source', scenarioHash: 'fixture', policyVersion: 'fixture', model: 'none',
+    actions: [], modelCalls: 0, finishedByAgent: false,
+  };
+  const replay = f.replay.getMockImplementation()!;
+  f.replay.mockImplementation(async (...args) => {
+    const result = await replay(...args);
+    if (args[2].results[0].tester.context.network.mode === 'normal') {
+      result.results[0].checks[0].actual = 'ok';
+      result.results[0].checks[0].status = 'passed';
+      result.results[0].run.verdict = 'passed';
+    }
+    return result;
+  });
+  const prepared = await f.runtime.prepare(f.job, secrets);
+  expect(prepared.error).toBeUndefined();
+  expect(prepared.investigation?.outcome).toBe('likely_trigger');
+  expect(prepared.investigation?.trials.map(t => [t.condition, t.repeat])).toEqual([
+    ['original', 1], ['original', 2], ['normal_network', 1], ['normal_network', 2],
+  ]);
+  expect(new Set(f.seen.map(s => s.directory)).size).toBe(4);
+  const packet = f.propose.mock.calls[0][0] as { cases: { context: unknown }[] };
+  expect(packet.cases[0].context).toEqual(failed.tester.context);
+  expect(await readFile(join(f.repositoryPath, originalDb), 'utf8')).toBe('live-db');
+});
+
+it('continues preparing a code fix when the additional isolated network replay fails', async () => {
+  const f = await fixture();
+  f.job.sourceRun.results[0].tester.context.network = { mode: 'request_delay', delayMs: 20, pathPrefix: '/'  };
+  const replay = f.replay.getMockImplementation()!;
+  let calls = 0;
+  f.replay.mockImplementation(async (...args) => {
+    if (++calls > 1) throw new Error('isolation unavailable');
+    return replay(...args);
+  });
+  const prepared = await f.runtime.prepare(f.job, secrets);
+  expect(prepared.error).toBeUndefined();
+  expect(prepared.patch).toBeDefined();
+  expect(prepared.investigation?.outcome).toBe('unresolved');
+  expect(prepared.investigation?.trials).toHaveLength(4);
+});
+
+
+it('includes persona behavior, stage conditions and entry checkpoints in the compact coding packet', async () => {
+  const f = await fixture();
+  const result = f.job.sourceRun.results[0];
+  result.tester.context.background = 'Returns to unfinished work after an interruption';
+  result.journey.stages = [{ id: 'return', label: 'Return', goal: 'Resume', transition: 'reopen', pauseMs: 10 }];
+  result.journey.checks[0].atStageStart = 'return';
+  result.checks[0].atStageStart = 'return';
+  const prepared = await f.runtime.prepare(f.job, secrets);
+  expect(prepared.error).toBeUndefined();
+  expect(prepared.investigation).toBeUndefined();
+  const input = f.propose.mock.calls[0][0] as { cases: { context: unknown; stages: unknown; checks: { atStageStart: string }[] }[] };
+  expect(input.cases[0].context).toEqual(result.tester.context);
+  expect(input.cases[0].stages).toEqual(result.journey.stages);
+  expect(input.cases[0].checks[0].atStageStart).toBe('return');
+  expect(f.seen).toHaveLength(1);
 });
