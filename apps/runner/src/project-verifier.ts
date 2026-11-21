@@ -1,5 +1,6 @@
 import { errors, type Page } from 'playwright';
 import type { ProjectCheck, ProjectCheckResult } from '@lastmile/contracts/projects';
+import { fieldNameLocator } from './field-locator';
 
 const TOTAL_TIMEOUT_MS = 15_000;
 const LOCATOR_TIMEOUT_MS = 2_000;
@@ -71,6 +72,7 @@ function locate(page: Page, { by, value, name }: ProjectCheck['locator']) {
     case 'label': return page.getByLabel(value, { exact: true });
     case 'text': return page.getByText(value, { exact: true });
     case 'testId': return page.getByTestId(value);
+    case 'fieldName': return fieldNameLocator(page, value);
   }
 }
 

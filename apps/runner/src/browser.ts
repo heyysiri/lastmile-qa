@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium, errors, type BrowserContext, type BrowserContextOptions, type Locator, type Page, type Request } from 'playwright';
 import { resolveExpected, type AppliedCapability, type ContextPack, type InputValue, type LocatorSpec, type StepEvent } from '@lastmile/contracts';
+import { fieldNameLocator } from './field-locator';
 import { BrowserActionSchema, type BrowserAction, type RecordedAction } from '@lastmile/contracts/runtime';
 
 type BrowserSessionOptions = {
@@ -63,6 +64,7 @@ function semanticLocator(page: Page, locator: LocatorSpec) {
     case 'label': return page.getByLabel(locator.value, { exact: true });
     case 'text': return page.getByText(locator.value, { exact: true });
     case 'testId': return page.getByTestId(locator.value);
+    case 'fieldName': return fieldNameLocator(page, locator.value);
   }
 }
 
@@ -77,6 +79,62 @@ export async function replayPosition(page:Page, redact = (value:string) => value
       tag: redact(focus.tag), role: focus.role === null ? null : redact(focus.role), id: redact(focus.id), name: redact(focus.name),
     }),
   };
+}
+
+const SNAPSHOT_LIMIT = 16_000;
+const FIELD_CONTROLS = 'input, select, textarea';
+const FIELD_LIMITS = { scan: 2_000, collect: 500, name: 200, label: 80 };
+const FIELD_METADATA_LIMIT = { lines: 60, characters: 3_000 };
+type FieldControl = { name: string; label: string };
+
+/**
+ * Runs in the page: visible, named, non-password controls with nearby label text, in document order.
+ * It deliberately declares no nested functions: tsx's keepNames would inject helpers that a
+ * serialized function cannot resolve in the page.
+ */
+function collectFieldControls(elements: Element[], limits: typeof FIELD_LIMITS): FieldControl[] {
+  const found: FieldControl[] = [];
+  for (const element of elements.slice(0, limits.scan)) {
+    const control = element as HTMLInputElement;
+    const name = control.getAttribute('name') ?? '';
+    const box = control.getBoundingClientRect();
+    if (!name || control.type === 'password' || !box.width || !box.height || getComputedStyle(control).visibility === 'hidden') continue;
+    const sibling = control.previousElementSibling;
+    const parent = control.parentElement;
+    let root: Element | null | undefined = control.labels?.[0];
+    if (!root && sibling?.tagName === 'LABEL') root = sibling;
+    if (!root && parent && parent.querySelectorAll('input,select,textarea').length === 1) root = parent.querySelector(':scope > label');
+    let text = control.getAttribute('aria-label') ?? '';
+    if (!text && root) {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (!node.parentElement?.closest('input,select,textarea,option,script,style')) text += node.textContent ?? '';
+      }
+    }
+    found.push({ name, label: text.replace(/\s+/g, ' ').trim().slice(0, limits.label) });
+    if (found.length >= limits.collect) break;
+  }
+  return found;
+}
+
+/** Exact `- fieldName "<JSON name>"` lines (optionally ` nearbyLabel "<JSON>"`), bounded, never values or passwords. */
+function formatFieldMetadata(controls: FieldControl[], redact: (text: string) => string): { text: string; names: Set<string> } {
+  const header = 'Form fields (exact HTML name attributes of visible controls; use locator by "fieldName"):\n';
+  const lines: string[] = [];
+  const names = new Set<string>();
+  let used = header.length;
+  let omitted = 0;
+  for (const { name, label } of controls) {
+    const safeLabel = label && redact(label);
+    const line = '- fieldName ' + JSON.stringify(name) + (safeLabel ? ' nearbyLabel ' + JSON.stringify(safeLabel) : '') + '\n';
+    const publishable = name.length <= FIELD_LIMITS.name && !/[\u0000-\u001f\u007f]/.test(name) && redact(name) === name;
+    if (!publishable || lines.length >= FIELD_METADATA_LIMIT.lines || used + line.length > FIELD_METADATA_LIMIT.characters - 80) { omitted++; continue; }
+    lines.push(line);
+    names.add(name);
+    used += line.length;
+  }
+  if (!lines.length && !omitted) return { text: '', names };
+  return { text: header + lines.join('') + (omitted ? `- fieldMetadata omitted: ${omitted} more visible named controls\n` : ''), names };
 }
 
 export async function createBrowserSession(options: BrowserSessionOptions): Promise<BrowserSession> {
@@ -227,6 +285,7 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
     let index = 0;
     let busy = false;
     let observed: Locator | undefined;
+    let observedFieldNames = new Set<string>();
     let closing: Promise<void> | undefined;
 
     function recordableUrl() {
@@ -267,6 +326,8 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
       if (await locator.count() !== 1 || !await locator.isVisible()) {
         throw new BrowserActionError('Locator must match one unique visible control');
       }
+      // A listed field name is itself observation evidence, even when a long page cut the control's aria ref.
+      if (spec.by === 'fieldName' && observedFieldNames.has(spec.value)) return locator;
       if (!observed || await locator.and(observed).count() !== 1) {
         throw new BrowserActionError('Locator must match an observed control. Observe the page again.');
       }
@@ -324,11 +385,33 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
       }
     }
 
+    async function fieldMetadata(timing:{signal:AbortSignal}) {
+      const read = page.locator(FIELD_CONTROLS).evaluateAll(collectFieldControls, FIELD_LIMITS);
+      let controls: FieldControl[] = [];
+      try {
+        controls = await new Promise<FieldControl[]>((resolve, reject) => {
+          const abort = () => reject(timing.signal.reason);
+          if (timing.signal.aborted) return abort();
+          timing.signal.addEventListener('abort', abort, { once: true });
+          read.then(resolve, reject).finally(() => timing.signal.removeEventListener('abort', abort));
+        });
+      } catch (error) {
+        // A navigating page can lose the evaluation; only a spent budget or cancellation is fatal.
+        timing.signal.throwIfAborted();
+        void error;
+      }
+      return formatFieldMetadata(controls, redact);
+    }
+
     async function snapshot(timing:{timeout:number;signal:AbortSignal}) {
       const url = recordableUrl();
       const focusRef = await page.locator(':focus').count() === 1
         ? await page.locator(':focus').ariaSnapshot({ depth: 1, ...timing }) : '';
-      const snapshot = redact(await page.ariaSnapshot({ mode: 'ai', ...timing })).slice(0, 16_000);
+      const aria = redact(await page.ariaSnapshot({ mode: 'ai', ...timing }));
+      // Field names are reserved first so a long sidebar cannot push them out of the 16k observation.
+      const fields = await fieldMetadata(timing);
+      observedFieldNames = fields.names;
+      const snapshot = fields.text + aria.slice(0, SNAPSHOT_LIMIT - fields.text.length);
       const refs = snapshot.split('\n').flatMap(line => {
         const ref = /\[ref=((?:f\d+)?e\d+)\]/.exec(line)?.[1];
         return ref && !line.includes('[aria-hidden]') ? [page.getByRef(ref)] : [];

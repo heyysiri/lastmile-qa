@@ -1,4 +1,5 @@
 import type { Locator, Page } from 'playwright';
+import { fieldNameLocator } from './field-locator';
 import { resolveExpected, type AssertionResult, type InputValue, type LocatorSpec, type ScenarioDefinition } from '@lastmile/contracts';
 
 export type OutcomeContract = ScenarioDefinition['contract'];
@@ -65,6 +66,7 @@ function locate(page: Page, spec: LocatorSpec): Locator {
     case 'label': return page.getByLabel(spec.value, { exact: true });
     case 'text': return page.getByText(spec.value, { exact: true });
     case 'testId': return page.getByTestId(spec.value);
+    case 'fieldName': return fieldNameLocator(page, spec.value);
   }
 }
 

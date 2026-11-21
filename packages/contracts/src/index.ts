@@ -9,8 +9,13 @@ export const ExpectedSchema = z.union([
 ]);
 export type Expected = z.infer<typeof ExpectedSchema>;
 export const LocatorSchema = z.object({
-  by: z.enum(['role', 'label', 'text', 'testId']), value: z.string().min(1).max(500), name: z.string().optional(),
-}).strict();
+  by: z.enum(['role', 'label', 'text', 'testId', 'fieldName']), value: z.string().min(1).max(500), name: z.string().optional(),
+}).strict().superRefine((locator, ctx) => {
+  // fieldName is the exact HTML name attribute of an input, select or textarea.
+  if (locator.by !== 'fieldName') return;
+  if (locator.name !== undefined) ctx.addIssue({ code: 'custom', path: ['name'], message: 'fieldName locators do not take an accessible name' });
+  if (/[\u0000-\u001f\u007f]/.test(locator.value)) ctx.addIssue({ code: 'custom', path: ['value'], message: 'Field names cannot contain control characters' });
+});
 export type LocatorSpec = z.infer<typeof LocatorSchema>;
 export const AssertionSchema = z.discriminatedUnion('kind', [
   z.object({ id, kind: z.literal('visible'), locator: LocatorSchema }).strict(),
