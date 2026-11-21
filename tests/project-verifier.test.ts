@@ -20,8 +20,8 @@ beforeAll(async () => {
       res.writeHead(503).end('Unavailable');
       return;
     }
-    if (path === '/expired-session') {
-      res.writeHead(302, { location: '/editor' }).end();
+    if (path === '/expired-session' || path === '/editor?id=42') {
+      res.writeHead(302, { location: path === '/expired-session' ? '/editor' : '/editor?id=43#details' }).end();
       return;
     }
     if (path === '/redirect') {
@@ -100,6 +100,17 @@ it('loads a fresh document even when readback only changes the fragment', async 
   ], origin);
   expect(result).toMatchObject({ status: 'passed', actual: 'Original' });
   expect(page.url()).toBe(`${origin}/editor#details`);
+});
+
+it('treats query and fragment as part of the readback and action page identity', async () => {
+  await page.goto(`${origin}/editor?id=43#details`);
+  const results = await verifyProjectChecks(page, [
+    check('wrong-record', { phase: 'after_reload', path: '/editor?id=42#details' }),
+    check('wrong-action-record', { path: '/editor?id=42#details' }),
+    check('wrong-action-fragment', { path: '/editor?id=43' }),
+    check('current-action-record', { path: '/editor?id=43#details' }),
+  ], origin);
+  expect(results.map(result => result.status)).toEqual(['not_evaluated', 'not_evaluated', 'not_evaluated', 'passed']);
 });
 
 it('captures visible, field and trimmed text before the action and detects later corruption with frozen expectations', async () => {

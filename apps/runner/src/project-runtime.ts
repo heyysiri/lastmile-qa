@@ -1,19 +1,58 @@
 import {randomUUID} from 'node:crypto';
-import {mkdir,writeFile,readFile,cp,realpath} from 'node:fs/promises';
+import {mkdir,writeFile,readFile,cp,realpath,rm} from 'node:fs/promises';
 import {join,resolve,sep} from 'node:path';
 import Database from 'better-sqlite3';
-import type {DiscoverProject,Project,ProjectSecrets,ProjectRun,ProjectHistory,ProjectJourney,ProjectTester,ProjectTesterResult,ProjectCheckResult,ProjectRuntime,RepositoryIndex} from '@lastmile/contracts/projects';
-import {createBrowserSession,replayPosition,type BrowserSession} from './browser';
+import type {DiscoverProject,Project,ProjectSecrets,ProjectRun,ProjectHistory,ProjectJourney,ProjectTester,ProjectTesterResult,ProjectCheck,ProjectCheckResult,ProjectDiscovery,ProjectRuntime,RepositoryIndex,SourceReference} from '@lastmile/contracts/projects';
+import {createBrowserSession,routeIdentity,type BrowserSession} from './browser';
 import {runAgent} from './agent';
 import {hashValue,writeArtifactManifest} from './artifacts';
 import {classifyOutcome} from './outcome';
-import {scanRepository} from './repository-index';
+import {scanRepository,sourceReference} from './repository-index';
 import {captureProjectChecks,verifyProjectChecks} from './project-verifier';
 import {createProjectSessions,projectActorRun} from './project-sessions';
 import {createRepositoryBrain} from './project-brain';
 import {createProjectRepairRuntime} from './project-repair';
 
 type Options={privateRoot:string;artifactRoot:string;apiKey?:string;model:string;discover?:DiscoverProject;actor?:typeof runAgent};
+type PreparedJourney={journey:ProjectJourney;unavailable:Map<string,string>;blocked?:string};
+const containsPrivateValue=(value:unknown,privateValues:string[])=>typeof value==='string'&&privateValues.some(secret=>value.includes(secret));
+
+function currentSourceCheck(project:Project,index:RepositoryIndex){
+ const files=new Map(index.files.map(file=>[file.path,file.hash]));
+ const textSources=new Map([['$brief',project.brief],['$requirements',project.requirements]]);
+ return (ref:SourceReference)=>{
+  const text=textSources.get(ref.path);
+  if(text===undefined)return files.get(ref.path)===ref.hash;
+  try{return hashValue(sourceReference(ref.path,hashValue(text),text,ref.startLine,ref.endLine))===hashValue(ref);}
+  catch{return false;}
+ };
+}
+
+function releaseDiscovery(fresh:ProjectDiscovery,prior:ProjectTesterResult[],isCurrent:(ref:SourceReference)=>boolean):ProjectDiscovery {
+ const journeys=prior.map(r=>r.journey),testers=new Map(prior.map(r=>[r.tester.id,r.tester]));
+ const ids=new Set(journeys.map(j=>j.id));
+ // Ignore presentation and a prior run's captured value when comparing coverage.
+ const coverage=({testerId,entryPath,goal,inputs,checks}:ProjectJourney)=>hashValue({testerId,entryPath,goal,inputs,checks:checks.map(({kind,locator,phase,path,expected})=>hashValue({kind,locator,phase,path,expected:phase==='preserve'?undefined:expected??(kind==='visible'?true:undefined)})).sort()});
+ const covered=new Set(journeys.filter(j=>j.checks.every(c=>c.sources.every(isCurrent)&&(c.phase!=='preserve'||c.expected!==undefined))).map(coverage));
+ let omitted=0;
+ for(const journey of fresh.plan.journeys){
+  const key=coverage(journey);
+  if(covered.has(key))continue;
+  if(journeys.length===6){omitted++;continue;}
+  const tester=fresh.plan.testers.find(t=>t.id===journey.testerId)!;
+  if(!testers.has(tester.id))testers.set(tester.id,tester);
+  let id=journey.id;
+  for(let n=2;ids.has(id);n++)id=`${journey.id.slice(0,76)}-${n}`;
+  ids.add(id);covered.add(key);journeys.push({...journey,id});
+ }
+ const gaps=omitted?[`${omitted} newly discovered ${omitted===1?'journey was':'journeys were'} omitted because prior coverage filled the six-journey limit.`,...fresh.plan.gaps].slice(0,15):fresh.plan.gaps;
+ return {...fresh,plan:{...fresh.plan,testers:[...testers.values()],journeys,gaps}};
+}
+
+function notEvaluated({id,label,basis,phase,sources,expected}:ProjectCheck,message:string):ProjectCheckResult {
+ return {id,label,basis,phase,sources,expected,status:'not_evaluated',message};
+}
+
 export function createProjectRuntime(options:Options):ProjectRuntime&{replay:(project:Project,secrets:ProjectSecrets,source:ProjectRun,sessionRoot:string)=>Promise<ProjectRun>}{
  const sessions=createProjectSessions(options),actor=options.actor??runAgent;
  const discover=options.discover??createRepositoryBrain({apiKey:options.apiKey,model:options.model,observe:sessions.observe});
@@ -32,44 +71,73 @@ export function createProjectRuntime(options:Options):ProjectRuntime&{replay:(pr
   run.metrics.browserActions=run.results.reduce((n,r)=>n+(r.run.evidence?.actions.length??0),0);
   run.summary=run.metrics.failed?`${run.metrics.failed} journey${run.metrics.failed===1?' needs':'s need'} attention. ${run.metrics.passed} passed the independent checks.`:run.metrics.inconclusive?`${run.metrics.inconclusive} journey${run.metrics.inconclusive===1?' needs':'s need'} more evidence. ${run.metrics.passed} passed.`:`All ${run.metrics.passed} journeys passed their independent checks.`;
  }
- async function testJourney(project:Project,secrets:ProjectSecrets,tester:ProjectTester,input:ProjectJourney,history:ProjectHistory[],sourceVersion:string,onProgress:()=>void,original?:ProjectTesterResult,sessionRoot?:string):Promise<ProjectTesterResult>{
-  const journey=structuredClone(input),run=projectActorRun(journey.goal,journey.entryPath,journey.inputs,tester.context);
+ async function prepareJourney(project:Project,tester:ProjectTester,input:ProjectJourney,unavailable:Map<string,string>,verified:boolean,privateValues:string[]):Promise<PreparedJourney>{
+  const prepared={journey:structuredClone(input),unavailable};
+  if(!verified)return {...prepared,blocked:'The development account could not be verified as signed in'};
+  if(unavailable.size===input.checks.length)return {...prepared,blocked:'The prior coverage could not be evaluated'};
+  const needsCapture=input.checks.filter(c=>c.phase==='preserve'&&c.expected===undefined&&!unavailable.has(c.id));
+  if(!needsCapture.length)return prepared;
+  const directory=join(options.privateRoot,'captures',randomUUID()),signal=AbortSignal.timeout(180000);
+  let session:BrowserSession|undefined;
+  try{
+   const stored=await sessions.load(project,tester.accountId??tester.id);
+   session=await createBrowserSession({pack:tester.context,inputs:{},origin:project.appUrl,allowedOrigins:project.allowedOrigins,storageState:stored,redactValues:privateValues,artifactDirectory:directory,signal,onStep:()=>{}});
+   const captured=await captureProjectChecks(session.page,needsCapture,new URL(project.appUrl).origin,signal);
+   for(const check of captured){
+    if(containsPrivateValue(check.expected,privateValues)){
+     unavailable.set(check.id,'The preserved value contains private account data');
+    }else prepared.journey.checks[prepared.journey.checks.findIndex(c=>c.id===check.id)]=check;
+   }
+   if(unavailable.size===input.checks.length)return {...prepared,blocked:'The preserved state could not be evaluated'};
+   return prepared;
+  }catch(error){return {...prepared,blocked:error instanceof Error?error.message:'Could not capture preserved state'};}
+  finally{await session?.close().catch(()=>{});await rm(directory,{recursive:true,force:true});}
+ }
+ async function testJourney(project:Project,secrets:ProjectSecrets,tester:ProjectTester,{journey,unavailable,blocked}:PreparedJourney,history:ProjectHistory[],sourceVersion:string,original?:ProjectTesterResult,sessionRoot?:string):Promise<ProjectTesterResult>{
+  const run=projectActorRun(journey.goal,journey.entryPath,journey.inputs,tester.context);
   run.scenario.id=journey.id;run.scenario.label=journey.title;run.executionMode=original?'deterministic':'ai_guided';
   run.continuity={populationId:project.id,testerId:tester.id,mode:'continue',initialStateId:'native-session',workflowId:journey.id,preserveStatePaths:[],history:history.filter(h=>h.testerId===tester.id).slice(0,3).map(h=>({runId:h.runId,buildId:'observed-history',goal:h.goal,observation:h.observations.join('\n'),recordedAt:h.createdAt}))};
   run.evidence={buildId:sourceVersion,scenarioHash:hashValue(journey),policyVersion:'project-ui-v1',model:original?'none':options.model,modelCalls:0,actions:[],finishedByAgent:false,...(original?{replayCompatible:false}: {})};
   const directory=join(options.artifactRoot,run.id);await mkdir(directory,{recursive:true});
   const identity=tester.accountId??tester.id,stored=await sessions.load(project,identity,sessionRoot);let session:BrowserSession|undefined,complete=false,message='';let checks:ProjectCheckResult[]=[];
-  const signal=AbortSignal.timeout(180000);
+  const signal=AbortSignal.timeout(180000),privateValues=sessions.privateValues(secrets).filter(Boolean);
   try{
-   session=await createBrowserSession({pack:tester.context,inputs:journey.inputs,origin:project.appUrl,allowedOrigins:project.allowedOrigins,storageState:stored,redactValues:sessions.privateValues(secrets),artifactDirectory:directory,signal,onStep:step=>{run.steps.push({...step,screenshot:step.screenshot?`${run.id}/${step.screenshot}`:undefined});onProgress();}});
+   if(blocked)throw new Error(blocked);
+   session=await createBrowserSession({pack:tester.context,inputs:journey.inputs,origin:project.appUrl,allowedOrigins:project.allowedOrigins,storageState:stored,redactValues:privateValues,artifactDirectory:directory,signal,onStep:step=>{run.steps.push({...step,screenshot:step.screenshot?`${run.id}/${step.screenshot}`:undefined});}});
    if(original){
     // Repair receives private copies of the before-run sessions and frozen values. No agent participates.
     const actions=original.run.evidence?.actions;if(!actions?.length)throw new Error('Recorded browser actions are unavailable');
     for(const recorded of actions){
-     if(recorded.action.tool!=='navigate'){
-      await session.refreshObservation();const position=await replayPosition(session.page);
-      if(recorded.urlBefore&&position.url!==recorded.urlBefore)throw new Error('Replay reached a different page');
+     const versioned=recorded.routeVersion===2;
+     const navigation=recorded.action.tool==='navigate';
+     if(!navigation)await session.refreshObservation();
+     if(versioned||!navigation){
+      const position=await session.inspectReplayPosition();
+      const current=versioned?position.url:new URL(session.page.url()).pathname;
+      if(recorded.urlBefore&&current!==recorded.urlBefore)throw new Error('Replay reached a different page before an action');
       if(recorded.action.tool==='pressKey'&&recorded.focusBefore&&position.focus!==recorded.focusBefore)throw new Error('Replay keyboard focus changed');
      }
      await session.execute(recorded.action);
+     if(versioned&&(await session.inspectReplayPosition()).url!==routeIdentity(recorded.url))throw new Error('Replay reached a different page after an action');
     }
     complete=true;run.evidence.replayCompatible=true;
    }else{
-    journey.checks=await captureProjectChecks(session.page,journey.checks,new URL(project.appUrl).origin,signal);
     await session.execute({tool:'navigate',path:journey.entryPath});
     const result=await actor(session,run,{apiKey:options.apiKey,model:options.model,signal});
     complete=result.finished;message=result.reason;run.evidence.modelCalls=result.modelCalls;run.evidence.finishedByAgent=result.finished;
    }
-   checks=await verifyProjectChecks(session.page,journey.checks,new URL(project.appUrl).origin,signal);
+   checks=await verifyProjectChecks(session.page,journey.checks.filter(c=>!unavailable.has(c.id)),new URL(project.appUrl).origin,signal);
    await sessions.save(project,identity,await session.storageState(),sessionRoot);
   }catch(error){complete=false;message=error instanceof Error?error.message:'Browser execution unavailable';}
   finally{if(session){run.evidence.actions=structuredClone(session.actions);run.capabilities=structuredClone(session.capabilities);await session.close().catch(()=>{complete=false;message='Browser evidence could not be saved';});}}
-  if(!checks.length)checks=journey.checks.map(c=>({id:c.id,label:c.label,basis:c.basis,phase:c.phase,sources:c.sources,expected:c.expected,status:'not_evaluated',message:'The journey did not reach independent verification'}));
-  // Accounts never appear in public checks, history or provider inputs.
-  const redact=(value:string)=>sessions.privateValues(secrets).filter(Boolean).reduce((text,secret)=>text.replaceAll(secret,'[private]'),value);
-  checks=checks.map(c=>({...c,actual:typeof c.actual==='string'?redact(c.actual):c.actual,expected:typeof c.expected==='string'?redact(c.expected):c.expected}));
+  const redact=(value:string)=>privateValues.reduce((text,secret)=>text.replaceAll(secret,'[private]'),value);
+  checks=journey.checks.map(c=>{
+   const result=checks.find(check=>check.id===c.id);
+   if(containsPrivateValue(result?.actual,privateValues))return notEvaluated(c,'The observed value contains private account data');
+   return result??notEvaluated(c,unavailable.get(c.id)??redact(blocked??'The journey did not reach independent verification'));
+  });
   run.assertions=checks;run.status='completed';run.finishedAt=new Date().toISOString();run.verdict=classifyOutcome(checks,complete);
-  const failed=checks.filter(c=>c.status==='failed'),result:ProjectTesterResult={tester,journey,run,checks,sessionContinued:Boolean(stored)};
+  const failed=checks.filter(c=>c.status==='failed'),result:ProjectTesterResult={tester,journey,run,checks,sessionContinued:!blocked&&Boolean(stored)};
   if(run.verdict!=='passed'){
    const description=run.verdict==='inconclusive'?redact(message||'One or more independent checks could not be evaluated.'):failed.map(c=>`${c.label}: expected ${JSON.stringify(c.expected)}, observed ${JSON.stringify(c.actual)??'unavailable'}.`).join(' ');
    result.finding={id:randomUUID(),testerId:tester.id,journeyId:journey.id,title:run.verdict==='inconclusive'?`${tester.name} needs more evidence`:failed[0].label,description,confidence:run.verdict==='inconclusive'?'inconclusive':failed.every(c=>c.basis!=='implementation'&&c.actual!==undefined&&c.actual!==false)?'confirmed':'suspected',impact:journey.reason,sources:failed.length?failed.flatMap(c=>c.sources):journey.sources,failedCheckIds:failed.map(c=>c.id)};
@@ -79,20 +147,53 @@ export function createProjectRuntime(options:Options):ProjectRuntime&{replay:(pr
   const manifest=await writeArtifactManifest(directory);run.artifactManifestHash=hashValue(manifest);run.artifacts=manifest.map(a=>`${run.id}/${a.name}`);
   return result;
  }
- async function execute(project:Project,secrets:ProjectSecrets,input:ProjectRun,history:ProjectHistory[],onUpdate:(run:ProjectRun)=>void){
+ async function execute(project:Project,secrets:ProjectSecrets,input:ProjectRun,history:ProjectHistory[],onUpdate:(run:ProjectRun)=>void,previousRun?:ProjectRun){
   const started=Date.now(),run=structuredClone(input);const index=await scanRepository(project.repositoryPath);
+  const prior=input.request.mode==='release'?(previousRun?.results??[]):[];
+  const privateValues=sessions.privateValues(secrets).filter(Boolean);
+  const isCurrent=currentSourceCheck(project,index);
+  if(prior.some(r=>r.journey.checks.some(c=>containsPrivateValue(c.expected,privateValues))))
+   throw new Error('Prior coverage contains a private account value and cannot be published');
   let discovery=project.discovery;
-  if(!discovery||input.request.mode==='release'||discovery.index.version!==index.version){run.phase='Refreshing the application map';onUpdate(run);discovery=await discover(project,secrets,message=>{run.phase=message;onUpdate(run);},discovery);run.metrics.modelCalls+=discovery.modelCalls;}
-  run.discovery=discovery;run.sourceVersion=discovery.index.version;
+  if(!discovery||input.request.mode==='release'||discovery.index.version!==index.version){
+   run.phase='Refreshing the application map';onUpdate(run);
+   try{
+    discovery=await discover(project,secrets,message=>{run.phase=message;onUpdate(run);},discovery);
+    run.metrics.modelCalls+=discovery.modelCalls;
+   }catch(error){
+    const previous=previousRun?.discovery??discovery;
+    if(!prior.length||!previous)throw error;
+    discovery={...previous,index:{version:index.version,sourceLines:index.sourceLines,excludedFiles:index.excludedFiles,indexedAt:index.indexedAt,changedPaths:[],fileCount:index.files.length},
+     plan:{...previous.plan,journeys:[],gaps:['Discovery could not refresh coverage for this release. Prior coverage is retained.',...previous.plan.gaps].slice(0,15)},observations:[],modelCalls:0,durationMs:Date.now()-started,generatedAt:new Date().toISOString()};
+   }
+  }
   if(index.version!==discovery.index.version)throw new Error('Source changed while the test team was prepared; run again after the edit completes');
-  await Promise.all(discovery.plan.testers.map(async tester=>{const auth=await sessions.authenticate(project,secrets,tester.accountId??tester.id);run.metrics.modelCalls+=auth.modelCalls;}));
-  await snapshot(project,run,index);run.phase='Your testers are exploring';onUpdate(run);
-  // Independent routes run together. A shared entry is serialized to avoid changing the same screen/entity concurrently.
-  const lanes=new Map<string,Promise<unknown>>();
-  await Promise.all(discovery.plan.journeys.map(journey=>{
-   const work=(lanes.get(journey.entryPath)??Promise.resolve()).then(async()=>{const tester=discovery!.plan.testers.find(t=>t.id===journey.testerId)!;const result=await testJourney(project,secrets,tester,journey,history,index.version,()=>{});run.results.push(result);run.metrics.modelCalls+=result.run.evidence?.modelCalls??0;summary(run);onUpdate(structuredClone(run));});lanes.set(journey.entryPath,work);return work;
+  if(prior.length)discovery=releaseDiscovery(discovery,prior,isCurrent);
+  run.discovery=discovery;run.sourceVersion=discovery.index.version;
+  run.phase='Freezing journey preconditions';onUpdate(structuredClone(run));
+  const testers=new Map(discovery.plan.testers.map(t=>[t.id,t]));
+  const authenticated=new Map(await Promise.all(discovery.plan.testers.map(async tester=>{
+   const auth=await sessions.authenticate(project,secrets,tester.accountId??tester.id);run.metrics.modelCalls+=auth.modelCalls;
+   return [tester.id,auth.verified] as const;
+  })));
+  await snapshot(project,run,index);
+  const priorIds=new Set(prior.map(r=>r.journey.id));
+  const prepared=await Promise.all(discovery.plan.journeys.map(journey=>{
+   const tester=testers.get(journey.testerId)!;
+   const unavailable=new Map<string,string>();
+   if(priorIds.has(journey.id))for(const check of journey.checks){
+    if(!check.sources.every(isCurrent))unavailable.set(check.id,'A prior check source citation is stale or missing');
+    else if(check.phase==='preserve'&&check.expected===undefined)unavailable.set(check.id,'The prior run did not freeze a preserved value');
+   }
+   return prepareJourney(project,tester,journey,unavailable,authenticated.get(tester.id)===true,privateValues);
   }));
-  run.results.sort((a,b)=>discovery!.plan.journeys.findIndex(j=>j.id===a.journey.id)-discovery!.plan.journeys.findIndex(j=>j.id===b.journey.id));
+  run.phase='Your testers are exploring';onUpdate(structuredClone(run));
+  // Different entry paths can share backend state. Replay starts from the
+  // same pre-action snapshot and uses this same serial journey order.
+  for(const item of prepared){
+   const result=await testJourney(project,secrets,testers.get(item.journey.testerId)!,item,history,index.version);
+   run.results.push(result);run.metrics.modelCalls+=result.run.evidence?.modelCalls??0;summary(run);onUpdate(structuredClone(run));
+  }
   if((await scanRepository(project.repositoryPath)).version!==index.version){for(const result of run.results){result.run.verdict='inconclusive';if(result.finding)result.finding.confidence='inconclusive';}run.error='Repository changed during execution; these results cannot establish a product regression';}
   run.status='completed';run.phase='Results ready';run.finishedAt=new Date().toISOString();run.metrics.elapsedMs=Date.now()-started;summary(run);return run;
  }
@@ -100,7 +201,7 @@ export function createProjectRuntime(options:Options):ProjectRuntime&{replay:(pr
   const run:ProjectRun={...structuredClone(source),id:randomUUID(),results:[],findings:[],status:'running',error:undefined,metrics:{elapsedMs:0,modelCalls:0,browserActions:0,passed:0,failed:0,inconclusive:0}};const start=Date.now();
   // Session storage origins include ports, unlike cookies. Rebind only the original app origin in the private snapshot.
   for(const tester of source.discovery?.plan.testers??source.results.map(r=>r.tester)){const identity=tester.accountId??tester.id,state=await sessions.load(project,identity,sessionRoot);if(state){const sourceOrigin=new URL(source.results[0]?.run.evidence?.actions.find(a=>a.action.tool==='navigate')?.url??project.appUrl).origin;for(const item of state.origins)if(item.origin===sourceOrigin)item.origin=new URL(project.appUrl).origin;await sessions.save(project,identity,state,sessionRoot);}}
-  for(const original of source.results)run.results.push(await testJourney(project,secrets,original.tester,original.journey,[],source.sourceVersion!,()=>{},original,sessionRoot));
+  for(const original of source.results)run.results.push(await testJourney(project,secrets,original.tester,{journey:structuredClone(original.journey),unavailable:new Map()},[],source.sourceVersion!,original,sessionRoot));
   run.status='completed';run.phase='Frozen checks replayed';run.finishedAt=new Date().toISOString();run.metrics.elapsedMs=Date.now()-start;summary(run);return run;
  }
  const repair=createProjectRepairRuntime({workspaceRoot:join(options.privateRoot,'repairs'),privateRoot:options.privateRoot,apiKey:options.apiKey,model:options.model,replay});

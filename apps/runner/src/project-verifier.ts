@@ -47,10 +47,10 @@ function readbackUrl(path: string | undefined, origin: string): URL {
   return applicationUrl(new URL(path, origin).href, origin);
 }
 
-function requireReadbackPage(page: Page, target: URL): void {
+function requireTargetPage(page: Page, target: URL): void {
   const current = applicationUrl(page.url(), target.origin);
-  if (current.pathname !== target.pathname || (target.hash && current.hash !== target.hash)) {
-    throw new CheckUnavailable('Readback redirected to a different page');
+  if (current.pathname !== target.pathname || current.search !== target.search || current.hash !== target.hash) {
+    throw new CheckUnavailable('Browser is on a different page from the check target');
   }
 }
 
@@ -59,7 +59,7 @@ async function navigate(page: Page, target: URL, budget: Budget, reload = false)
     const options = { timeout, waitUntil: 'domcontentloaded' as const };
     return reload ? page.reload(options) : page.goto(target.href, options);
   });
-  requireReadbackPage(page, target);
+  requireTargetPage(page, target);
   // A fragment-only navigation can retain the original document.
   if (!response && !reload) return navigate(page, target, budget, true);
   if (!response || response.status() >= 400) throw new CheckUnavailable('Readback page is unavailable');
@@ -115,7 +115,7 @@ export async function captureProjectChecks(page: Page, checks: ProjectCheck[], o
       const target = readbackUrl(check.path, appOrigin);
       await navigate(page, target, budget);
       const expected = await observe(page, check, appOrigin, budget);
-      requireReadbackPage(page, target);
+      requireTargetPage(page, target);
       if (expected === undefined || expected === false) throw new CheckUnavailable('No visible element matches the locator');
       captured.push({ ...check, expected });
     } catch (error) {
@@ -144,13 +144,18 @@ export async function verifyProjectChecks(page: Page, checks: ProjectCheck[], or
       if (check.kind === 'visible' && typeof expected !== 'boolean') throw new CheckUnavailable('Visibility check requires a boolean expectation');
       const appOrigin = applicationUrl(origin).origin;
       let target: URL | undefined;
-      if (phase !== 'after_action') {
+      if (phase === 'after_action') {
+        if (check.path !== undefined) {
+          target = readbackUrl(check.path, appOrigin);
+          requireTargetPage(page, target);
+        }
+      } else {
         const pathless = phase === 'after_reload' && check.path === undefined;
         target = pathless ? applicationUrl(originalUrl, appOrigin) : readbackUrl(check.path, appOrigin);
         await navigate(page, target, budget, pathless && page.url() === originalUrl);
       }
       const actual = await observe(page, check, appOrigin, budget);
-      if (target) requireReadbackPage(page, target);
+      if (target) requireTargetPage(page, target);
       const passed = actual === (check.kind === 'visible' ? expected : String(expected));
       results[index] = { ...result, actual, status: passed ? 'passed' : 'failed' };
       if (!passed) results[index].message = actual === undefined || actual === false
