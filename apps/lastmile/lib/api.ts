@@ -1,10 +1,11 @@
 import type { EvidenceRun, InvestigationRecord, InvestigationRequest } from '@lastmile/contracts/runtime';
+import type { PrepareRepairRequest, RepairJob, SuggestionJob, SuggestJourneysRequest, VerifyRepairRequest } from '@lastmile/contracts/evolution';
 import type { ApplicationContext, EnrollPopulationRequest, LaunchPopulationRequest, Population, PopulationDetail, PopulationExecution, PopulationExecutionDetail } from '@lastmile/contracts/populations';
 import type { GenerateStudyRequestSchema, LaunchStudyRequestSchema, SaveStudyRequestSchema, Study, StudyApplication, StudyExecution, StudyExecutionDetail } from '@lastmile/contracts/studies';
 import type { infer as Infer } from 'zod';
 import type { ContextPack, ScenarioDefinition } from '@lastmile/contracts';
 
-export type Health = { status: 'ok'; modelConfigured: boolean; executionReady: boolean };
+export type Health = { status: 'ok'; modelConfigured: boolean; executionReady: boolean; suggestionsReady?: boolean; repairsReady?: boolean };
 export type CapabilityInfo = { factor: string; mode?: string; description?: string; [k: string]: unknown };
 export class ApiFailure extends Error {
   constructor(public status: number, public code: string, message: string) { super(message); }
@@ -40,6 +41,13 @@ export const api = {
   launchPopulation: (id: string, request: LaunchPopulationRequest) => call<PopulationExecution>('POST', `populations/${encodeURIComponent(id)}/executions`, request),
   populationExecutions: () => call<PopulationExecution[]>('GET', 'population-executions'),
   populationExecution: (id: string) => call<PopulationExecutionDetail>('GET', `population-executions/${encodeURIComponent(id)}`),
+  suggestions: (populationId: string) => call<SuggestionJob[]>('GET', `populations/${encodeURIComponent(populationId)}/suggestions`),
+  suggestion: (id: string) => call<SuggestionJob>('GET', `suggestions/${encodeURIComponent(id)}`),
+  suggestJourneys: (populationId: string, request: SuggestJourneysRequest) => call<SuggestionJob>('POST', `populations/${encodeURIComponent(populationId)}/suggestions`, request),
+  repairs: (populationId: string) => call<RepairJob[]>('GET', `repairs?populationId=${encodeURIComponent(populationId)}`),
+  repair: (id: string) => call<RepairJob>('GET', `repairs/${encodeURIComponent(id)}`),
+  prepareRepair: (request: PrepareRepairRequest) => call<RepairJob>('POST', 'repairs', request),
+  verifyRepair: (id: string, request: VerifyRepairRequest) => call<RepairJob>('POST', `repairs/${encodeURIComponent(id)}/verify`, request),
   studies: () => call<Study[]>('GET', 'studies'),
   study: (id: string) => call<Study>('GET', `studies/${encodeURIComponent(id)}`),
   generateStudy: (request: Infer<typeof GenerateStudyRequestSchema>) => call<Study>('POST', 'studies/generate', request),

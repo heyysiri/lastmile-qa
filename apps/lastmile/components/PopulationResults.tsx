@@ -6,8 +6,10 @@ import { ArrowUpRight, CircleCheck, Clock3, GitCompareArrows } from 'lucide-reac
 import type { PopulationExecutionDetail, ReleaseComparison, PopulationTester } from '@lastmile/contracts/populations';
 import type { EvidenceRun } from '@lastmile/contracts/runtime';
 import { api, ApiFailure, useLoad } from '../lib/api';
+import { canPrepareRepair } from '../lib/evolution';
 import { isActive, populationExecutionHref, populationHref } from '../lib/populations';
 import { ApplicationProvenance } from './ApplicationProvenance';
+import { RepairPreparation } from './RepairPreparation';
 import { fieldName, RunChecks, RunScreenshot, RunSteps } from './RunEvidence';
 import { StudioBack, StudioError, TesterFace } from './Studio';
 import { Pending } from './ui';
@@ -79,6 +81,7 @@ export function PopulationResults({ populationId, executionId }: { populationId:
         </div>}
         {execution.status === 'interrupted' && <p className="muted">Execution interrupted. Any evidence recorded before the interruption is shown below.</p>}
       </section>
+      {canPrepareRepair(execution) && <RepairPreparation execution={execution} />}
       <div className="result-grid">
         {execution.population.testers.map((tester, index) => {
           const member = execution.members.find(item => item.testerId === tester.id);

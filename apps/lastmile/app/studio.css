@@ -263,3 +263,23 @@
 .comparison-reason { padding: .65rem .75rem; border-radius: 9px; background: var(--lilac); }
 .comparison-still_passing { background: var(--mint); }
 .comparison-regression { background: var(--peach); }
+
+/* Journey suggestions and repair review */
+.journey-suggestions { background: #f9f6fe; border: 1px solid var(--line); border-radius: 12px; padding: 1rem; margin-bottom: 1rem; }
+.suggestion-list, .repair-links { list-style: none; padding: 0; }
+.suggestion-list { display: grid; gap: .65rem; }
+.suggestion-list > li { background: white; border: 1px solid var(--line); border-radius: 10px; padding: .8rem; }
+.suggestion-list h3, .suggestion-list p { margin: 0 0 .45rem; }
+.suggestion-list .studio-disclosure { font-size: .85rem; }
+.suggestion-list .studio-disclosure ul { margin: 0 0 .6rem; padding-inline-start: 1.2rem; }
+.suggestion-inputs { display: flex; flex-wrap: wrap; gap: .25rem .65rem; margin: 0 0 .6rem; font-size: .85rem; }
+.suggestion-inputs div { display: flex; flex-wrap: wrap; gap: .35rem; }
+.suggestion-inputs dt { font-weight: 680; }
+.suggestion-inputs dd { margin: 0; }
+.repair-links .evidence-link { margin-top: 0; }
+.repair-files { margin-bottom: .9rem; }
+.patch-sources { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr)); gap: .65rem; }
+.patch-sources > div { min-width: 0; }
+.patch-sources h3 { font-size: .85rem; margin: 0 0 .35rem; }
+.patch-sources pre { max-height: 24rem; overflow: auto; border-radius: 9px; padding: .7rem; background: #fff0e3; font-size: .81rem; }
+.patch-sources > div + div pre { background: #e4f7ec; }

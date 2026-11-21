@@ -12,13 +12,17 @@ export function resolveProxyTarget(method: string, segments: readonly string[]):
   const [head, id, tail] = segments;
   const path = `/api/${segments.join('/')}`;
   const n = segments.length;
+  if (n === 3 && head === 'populations' && tail === 'suggestions' && (method === 'GET' || method === 'POST')) return path;
   if (method === 'GET') {
+    if ((n === 1 || n === 2) && head === 'repairs') return path;
+    if (n === 2 && head === 'suggestions') return path;
     if (n === 1 && ['health', 'capabilities', 'scenarios', 'context-packs', 'runs', 'investigations', 'applications', 'studies', 'study-executions', 'populations', 'population-executions'].includes(head)) return path;
     if (n === 2 && ['scenarios', 'context-packs', 'runs', 'investigations', 'studies', 'study-executions', 'populations', 'population-executions'].includes(head) && id) return path;
     if (n === 3 && head === 'runs' && tail === 'artifacts') return path;
     if (n === 3 && head === 'applications' && tail === 'context') return path;
     return null;
   }
+  if (method === 'POST' && head === 'repairs' && (n === 1 || (n === 3 && tail === 'verify'))) return path;
   if (method === 'POST' && n === 3 && head === 'runs' && tail === 'replay') return path;
   if (method === 'POST' && head === 'studies' && ((n === 2 && id === 'generate') || (n === 3 && tail === 'launch'))) return path;
   if (method === 'POST' && n === 3 && head === 'populations' && tail === 'executions') return path;

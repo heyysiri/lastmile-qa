@@ -10,6 +10,7 @@ import type { ApplicationWorkflow } from '@lastmile/contracts/studies';
 import { api, type Health } from '../lib/api';
 import { newRequestId } from '../lib/editor';
 import { checkpointBaselines, populationExecutionHref, usePendingWrite } from '../lib/populations';
+import { JourneySuggestions } from './JourneySuggestions';
 import { ExpectedChecks, fieldName } from './RunEvidence';
 import { StudioError, TesterFace } from './Studio';
 
@@ -78,6 +79,11 @@ export function PopulationLaunch({ population, workflows, executions, active, ca
   return <section className="studio-card population-launch" aria-labelledby="population-launch-title">
     <div className="card-heading"><span className="icon-tile"><Play size={18} aria-hidden="true" /></span><h2 id="population-launch-title">Start an execution</h2></div>
     {active && <p className="note warn" role="status">An execution is already queued or running. <Link href={populationExecutionHref(population.id, active.id)}>View live execution</Link></p>}
+    <div hidden={displayedMode !== 'continue'}>
+      <JourneySuggestions population={population} workflows={availableWorkflows} readiness={health?.suggestionsReady}
+        canApply={launch.ready && !launch.pending && !launch.busy}
+        onApply={suggested => setTasks(current => current.map(task => suggested.find(item => item.testerId === task.testerId) ?? task))} />
+    </div>
     <form onSubmit={submit} noValidate={Boolean(launch.pending)}>
       <fieldset className="plain-fieldset" disabled={Boolean(launch.pending) || launch.busy}>
         <legend className="sr-only">Execution mode</legend>

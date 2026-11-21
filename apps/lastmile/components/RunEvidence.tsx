@@ -66,7 +66,7 @@ export function RunScreenshot({ run }: { run: RunRecord }) {
   </figure>;
 }
 
-export function RunSteps({ run }: { run: RunRecord }) {
+export function RunSteps({ run, showArtifactLinks = true }: { run: RunRecord; showArtifactLinks?: boolean }) {
   return <details className="studio-disclosure run-steps">
     <summary>Journey steps <span className="badge">{run.steps.length}</span></summary>
     {run.steps.length ? <ol className="step-list">{run.steps.map(step => (
@@ -76,7 +76,7 @@ export function RunSteps({ run }: { run: RunRecord }) {
           <summary>{step.observation.split('\n', 1)[0]}</summary>
           <pre>{step.observation}</pre>
         </details> : <p>{step.observation}</p>}
-        {step.screenshot && run.artifacts.includes(step.screenshot) && <a href={artifactHref(run.id, step.screenshot)} target="_blank" rel="noreferrer">Screenshot for step {step.index}</a>}
+        {showArtifactLinks && step.screenshot && run.artifacts.includes(step.screenshot) && <a href={artifactHref(run.id, step.screenshot)} target="_blank" rel="noreferrer">Screenshot for step {step.index}</a>}
       </li>
     ))}</ol> : <p className="muted">No steps recorded.</p>}
   </details>;

@@ -1,12 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RunStatus } from '@lastmile/contracts';
+import type { RepairJob } from '@lastmile/contracts/evolution';
 import type { PopulationDetail, PopulationExecution } from '@lastmile/contracts/populations';
 import { ApiFailure } from './api';
 
 export const populationHref = (id: string) => `/populations/${encodeURIComponent(id)}`;
 export const populationExecutionHref = (populationId: string, id: string) =>
   `${populationHref(populationId)}/executions/${encodeURIComponent(id)}`;
-export const isActive = (status: RunStatus) => status === 'queued' || status === 'running';
+export const isActive = (status: RunStatus | RepairJob['status']) => status === 'queued' || status === 'running';
 
 export function checkpointBaselines(population: PopulationDetail, executions: PopulationExecution[]) {
   const episodes = new Map(population.episodes.map(episode => [episode.run.id, episode]));
@@ -31,12 +32,13 @@ export function checkpointBaselines(population: PopulationDetail, executions: Po
 }
 
 /** Preserve the entire accepted-or-unknown payload, including its ID, across reloads. */
-export function usePendingWrite<Request>(
+export function usePendingWrite<Request, Result extends { id: string }>(
   key: string,
   schema: { safeParse: (value: unknown) => { success: true; data: Request } | { success: false } },
-  send: (request: Request) => Promise<{ id: string }>,
-  onSuccess: (id: string) => void,
+  send: (request: Request) => Promise<Result>,
+  onSuccess: (id: string, result: Result) => void,
   onRejected: (error: ApiFailure, request: Request) => void,
+  resetOnSuccess = false,
 ) {
   const [ready, setReady] = useState(false);
   const [pending, setPending] = useState<Request | null>(null);
@@ -52,10 +54,17 @@ export function usePendingWrite<Request>(
     setReady(true);
   }, [key, schema]);
 
-  function clear() {
+  const clear = useCallback(() => {
     setPending(null);
     try { sessionStorage.removeItem(key); } catch { /* The request has been resolved. */ }
-  }
+  }, [key]);
+
+  const resolve = useCallback(() => {
+    clear();
+    setError(null);
+    lock.current = false;
+    setBusy(false);
+  }, [clear]);
 
   async function submit(draft?: Request) {
     const request = pending ?? draft;
@@ -68,8 +77,9 @@ export function usePendingWrite<Request>(
     try {
       const result = await send(request);
       if (!result?.id) throw new Error('The response was incomplete. Recover the original request to check its outcome.');
-      onSuccess(result.id);
-      clear();
+      onSuccess(result.id, result);
+      if (resetOnSuccess) resolve();
+      else clear();
     } catch (problem) {
       // A lost response or gateway failure can arrive after an accepted write.
       const rejected = problem instanceof ApiFailure && (
@@ -85,5 +95,5 @@ export function usePendingWrite<Request>(
       setBusy(false);
     }
   }
-  return { ready, pending, busy, error, submit };
+  return { ready, pending, busy, error, resolve, submit };
 }
