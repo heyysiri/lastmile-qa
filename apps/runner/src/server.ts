@@ -5,6 +5,7 @@ import Fastify from 'fastify';
 import type { ZodType } from 'zod';
 import { InvestigationRequestSchema, ReplayRequestSchema, type EvidenceRun, type ReplayPlan } from '@lastmile/contracts/runtime';
 import type { GenerateStudy, StudyApplication, StudyUser } from '@lastmile/contracts/studies';
+import type { ApplicationContext } from '@lastmile/contracts/populations';
 import { compileInputs } from '@lastmile/contracts';
 import { readArtifact, hashValue } from './artifacts';
 import { buildReplay } from './replay';
@@ -15,6 +16,7 @@ import {
 import { executeRun, type ExecuteRun } from './execution';
 import { openRunStore, RunnerError } from './store';
 import { registerStudyRoutes } from './study-routes';
+import { registerPopulationRoutes } from './population-routes';
 
 export type ServerOptions = {
   databasePath: string;
@@ -27,6 +29,7 @@ export type ServerOptions = {
   applications?: StudyApplication[];
   generateStudy?: GenerateStudy;
   validateStudyUser?: (application: StudyApplication, user: StudyUser) => void;
+  getApplicationContext?: (application: StudyApplication) => Promise<ApplicationContext>;
   executeReplay?: (run:EvidenceRun,onUpdate:(run:RunRecord)=>void,replay:ReplayPlan)=>Promise<EvidenceRun>;
 };
 
@@ -118,10 +121,19 @@ export function createServer(options: ServerOptions) {
     }
   }
 
+  async function performQueuedRun(run: EvidenceRun) {
+    if (!run.replay && run.continuity?.mode !== 'checkpoint') return performRun(run, execute);
+    const replay = run.replay;
+    const executeReplay = options.executeReplay;
+    if (!replay || !executeReplay) return failRun(run, 'Replay execution is unavailable');
+    await performRun(run, (record, update) => executeReplay(record, update, replay));
+  }
+
   const claimers = [
     () => { const run = store.claimNext(); return run && { kind: 'run' as const, run }; },
     () => { const study = store.studies.claimNext(); return study && { kind: 'study' as const, study }; },
     () => { const job = store.claimInvestigation(); return job && { kind: 'investigation' as const, job }; },
+    () => { const batch = store.populations.claimNext(); return batch && { kind: 'population' as const, batch }; },
   ];
   let nextQueue = 0;
 
@@ -151,6 +163,16 @@ export function createServer(options: ServerOptions) {
           store.studies.finishExecution(execution);
           continue;
         }
+        if (work.kind === 'population') {
+          const { execution, runs } = work.batch;
+          if (execution.population.origin === sellerDemoUrl.origin) {
+            await Promise.all(runs.map(performQueuedRun));
+          } else {
+            for (const run of runs) failRun(run, 'The connected application origin changed after launch');
+          }
+          store.populations.finishExecution(execution);
+          continue;
+        }
         if (work.kind === 'investigation') {
           const { job } = work;
           try {
@@ -175,12 +197,7 @@ export function createServer(options: ServerOptions) {
           }catch{store.updateInvestigation({...job,status:'completed',error:'Investigation could not establish a valid matched comparison. Check completed target/control evidence, matching scenario/build and configured factors.'});}
           continue;
         }
-        const { run } = work;
-        const replay = run.replay;
-        const perform: ExecuteRun = replay && options.executeReplay
-          ? (record, update) => options.executeReplay!(record, update, replay)
-          : execute;
-        await performRun(run, perform);
+        await performQueuedRun(work.run);
       }
     } catch {
       app.log.error('Runner queue processing failed');
@@ -238,6 +255,16 @@ export function createServer(options: ServerOptions) {
     executionMode,
     startWorker,
   });
+  registerPopulationRoutes(app, store.populations, {
+    applications: options.applications ?? [],
+    getApplicationContext: options.getApplicationContext,
+    validateStudyUser: options.validateStudyUser,
+    getBuildId: options.getBuildId,
+    origin: sellerDemoUrl.origin,
+    executionMode,
+    replayAvailable: Boolean(options.executeReplay),
+    startWorker,
+  });
 
   function parseScenario(body: unknown) {
     const scenario = parse(ScenarioSchema, body);
@@ -273,6 +300,14 @@ export function createServer(options: ServerOptions) {
     return run;
   }
 
+  function requireOrdinaryRun(id: string) {
+    const run = requireRun(id);
+    if (run.continuity) {
+      throw new RunnerError(400, 'persistent_run', 'Use population checkpoint comparisons for persistent tester runs');
+    }
+    return run;
+  }
+
   app.get('/api/runs', async () => store.listRuns());
   app.post('/api/runs', async (request, reply) => {
     const run = store.enqueue(
@@ -305,7 +340,7 @@ export function createServer(options: ServerOptions) {
   app.post<{Params:{id:string}}>('/api/runs/:id/replay',async(request,reply)=>{
     if(!options.executeReplay)throw new RunnerError(503,'execution_unavailable','Replay execution is unavailable');
     const input=parse(ReplayRequestSchema,request.body);
-    const source=requireRun(request.params.id) as EvidenceRun;
+    const source=requireOrdinaryRun(request.params.id);
     const context=store.contextPacks.get(input.contextPackId,input.contextRevision);
     if(!context)throw new RunnerError(404,'not_found','Context revision does not exist');
     let replay:ReplayPlan;
@@ -319,7 +354,7 @@ export function createServer(options: ServerOptions) {
   app.post('/api/investigations',async(request,reply)=>{
     if(!options.executeReplay)throw new RunnerError(503,'execution_unavailable','Replay execution is unavailable');
     const input=parse(InvestigationRequestSchema,request.body);
-    const target=requireRun(input.targetRunId) as EvidenceRun,control=requireRun(input.controlRunId) as EvidenceRun;
+    const target=requireOrdinaryRun(input.targetRunId),control=requireOrdinaryRun(input.controlRunId);
     if(target.status!=='completed'||target.verdict!=='failed'||control.status!=='completed'||control.verdict!=='passed'||!target.evidence||!control.evidence||target.evidence.scenarioHash!==control.evidence.scenarioHash||target.evidence.buildId!==control.evidence.buildId) throw new RunnerError(400,'invalid_comparison','Choose a failed target and passed control with the same scenario and build');
     if(input.factors.some(f=>!target.scenario.investigation.factors.includes(f))||input.maxAttempts>target.scenario.investigation.maxAttempts)throw new RunnerError(400,'invalid_factors','Investigation exceeds the scenario factor or attempt limits');
     const job=store.enqueueInvestigation(input);startWorker();return reply.code(202).send(job);

@@ -7,6 +7,7 @@ import type { EvidenceRun, InvestigationRecord, InvestigationRequest, ReplayPlan
 import { compileInputs, type RunRecord, type RunRequest, type ContextPack } from '@lastmile/contracts';
 import { desktopContext, inventoryScenario, mobileContext, storeScenario } from '@lastmile/contracts/examples';
 import { createStudyStore } from './study-store';
+import { createPopulationStore } from './population-store';
 
 export class RunnerError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) {
@@ -109,10 +110,11 @@ export function openRunStore(path: string) {
   }
 
   function enqueueRun(requestId: string, requestJson: string, manifest: Pick<EvidenceRun,
-    'scenario' | 'context' | 'inputs' | 'executionMode' | 'expectedBuildId'> & { sellerDemoUrl: string }) {
-    const { scenario, context, inputs, executionMode, expectedBuildId } = manifest;
+    'scenario' | 'context' | 'inputs' | 'executionMode' | 'expectedBuildId' | 'continuity' | 'replay'> & { sellerDemoUrl: string }) {
+    const { scenario, context, inputs, executionMode, expectedBuildId, continuity, replay } = manifest;
     const run: EvidenceRun = {
       id: randomUUID(), requestId, scenario, context, inputs, executionMode, expectedBuildId,
+      continuity, replay,
       manifestHash: createHash('sha256').update(canonicalJson(manifest)).digest('hex'),
       status: 'queued', verdict: null, createdAt: new Date().toISOString(),
       steps: [], assertions: [], findings: [], capabilities: [], artifacts: [],
@@ -121,10 +123,13 @@ export function openRunStore(path: string) {
     return run;
   }
 
-  const studies = createStudyStore(db, { enqueue: enqueueRun, get: getRun, save, hasRunning: () => Boolean(findRunning.get()) });
+  const runAccess = { enqueue: enqueueRun, get: getRun, save, hasRunning: () => Boolean(findRunning.get()) };
+  const studies = createStudyStore(db, runAccess);
+  const populations = createPopulationStore(db, runAccess, studies.requireStudy);
   const nextQueued = db.prepare<[], JsonRow>(`
     SELECT data FROM runs WHERE status = 'queued'
       AND NOT EXISTS (SELECT 1 FROM study_runs WHERE run_id = runs.id)
+      AND NOT EXISTS (SELECT 1 FROM population_runs WHERE run_id = runs.id)
     ORDER BY rowid LIMIT 1
   `);
 
@@ -142,6 +147,7 @@ export function openRunStore(path: string) {
   const saveInvestigation=(record:InvestigationRecord)=>{db.prepare('UPDATE investigations SET data = ? WHERE id = ?').run(JSON.stringify(record),record.id);return record;};
   const recoverInterrupted = db.transaction(() => {
     studies.recoverInterrupted();
+    populations.recoverInterrupted();
     for(const record of listInvestigations()) if(record.status==='running') saveInvestigation({...record,status:'interrupted',error:'Runner restarted during investigation'});
     for (const row of findRunning.all()) {
       const run = decode<RunRecord>(row);
@@ -157,6 +163,7 @@ export function openRunStore(path: string) {
   return {
     recoverInterrupted,
     studies,
+    populations,
     getInvestigation:(id:string)=>{const row=findInvestigation.get(id);return row?decode<InvestigationRecord>(row):undefined;},
     listInvestigations,
     enqueueInvestigation:db.transaction((request:InvestigationRequest)=>{
@@ -217,8 +224,13 @@ export function openRunStore(path: string) {
         throw new RunnerError(409, 'invalid_run_status', 'Run cannot be updated in this status');
       }
       const completed = update.status === 'completed';
+      const checkpoint = update.continuity?.startCheckpoint;
+      // The trusted executor resolves preserve-state assertions against the starting checkpoint.
+      // Store both together once so every later comparison uses the same scenario.
+      const freezeStart = run.continuity?.mode === 'continue' && !run.continuity.startCheckpoint && checkpoint;
       return save({
         ...run, status: update.status, verdict: completed ? update.verdict ?? 'inconclusive' : null,
+        ...(freezeStart && { scenario: update.scenario, continuity: { ...run.continuity!, startCheckpoint: checkpoint } }),
         finishedAt: completed ? new Date().toISOString() : undefined,
         namespaceId: update.namespaceId, steps: update.steps, assertions: update.assertions,
         findings: update.findings, capabilities: update.capabilities, artifacts: update.artifacts,
