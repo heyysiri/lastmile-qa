@@ -1,0 +1,12 @@
+{
+  "name": "@lastmile/contracts",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./examples": "./src/examples.ts"
+  },
+  "dependencies": {
+    "zod": "^4.3.5"
+  }
+}
