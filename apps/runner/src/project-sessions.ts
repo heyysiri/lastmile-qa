@@ -78,7 +78,7 @@ export function createProjectSessions(options:Options){
       await session.page.waitForLoadState('networkidle',{timeout:1500}).catch(()=>{});
       await expandNavigation(session);
       const text=await session.refreshObservation();
-      results.push({path:routeIdentity(session.page.url()),accountId:identity==='guest'?undefined:identity,text,observedAt:new Date().toISOString()});
+      results.push({path:routeIdentity(session.page.url()),requestedPath:path,accountId:identity==='guest'?undefined:identity,text,observedAt:new Date().toISOString()});
      }catch{/* Unavailable routes remain explicit coverage gaps in discovery. */}
     }
     return results;

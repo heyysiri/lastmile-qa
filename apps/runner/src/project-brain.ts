@@ -326,7 +326,9 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
         const safe = results.filter(item => routeSchema.safeParse(item.path).success && redact(item.path) === item.path &&
           (item.accountId === undefined || accounts.some(account => account.id === item.accountId)) && item.text.trim())
           .slice(0, paths.length * (accounts.length + 1))
-          .map(({ text, path, accountId, observedAt }) => ({ path, accountId, text: boundedObservation(redact(text)), observedAt }));
+          .map(({ text, path, requestedPath, accountId, observedAt }) => ({ path,
+            requestedPath: requestedPath && paths.includes(requestedPath) && redact(requestedPath) === requestedPath ? requestedPath : undefined,
+            accountId, text: boundedObservation(redact(text)), observedAt }));
         observationFailed ||= !safe.length;
         observations.push(...safe);
         return safe;
@@ -518,7 +520,7 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
         callback: async ({ paths }) => {
           if (signal.aborted || accepted || !options.observe) return 'Browser observation is unavailable';
           const requested = [...new Set(paths)].filter(path => !visited.has(path) && redact(path) === path).slice(0, routeLimit - visited.size);
-          const cached = observations.filter(item => paths.includes(item.path));
+          const cached = observations.filter(item => paths.includes(item.path) || (item.requestedPath !== undefined && paths.includes(item.requestedPath)));
           const results = [...cached, ...(requested.length ? await captureObservations(requested) : [])];
           if (results.length) return JSON.stringify(results);
           return requested.length ? 'Browser observation failed or the route was unavailable'
@@ -538,7 +540,7 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
             agent.cancel({ afterCurrentTools: true });
             return 'Plan accepted';
           } catch (error) {
-            validationError = error instanceof z.ZodError ? 'Submitted plan violates the project plan schema'
+            validationError = error instanceof z.ZodError ? redact(`Submitted plan violates the project plan schema: ${error.issues.slice(0, 12).map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ')}`)
               : error instanceof Error ? redact(error.message) : 'Submitted plan failed validation';
             const added = observations.slice(previousObservations, previousObservations + 6);
             return added.length ? JSON.stringify({ error: validationError, observations: added }) : validationError;

@@ -89,8 +89,25 @@ it('returns malformed plan errors to the model without corrupting the provider c
  expect(turns).toBe(2);
 });
 
+it('returns the observed redirect destination when a requested route is read from cache', async () => {
+  await writeFile(join(fixture, 'app.py'), 'route = "/workspace"');
+  const observe = vi.fn(async (_project: Project, _secrets: ProjectSecrets, paths: string[]) => paths.map(path => ({
+    requestedPath: path, path: path === '/workspace' ? '/workspace?view=all' : path,
+    text: '- heading "Workspace"', accountId, observedAt: now,
+  })));
+  let turn = 0, cached = '';
+  const complete = async (request: unknown) => {
+    if (++turn < 3) return call(turn, 'observe_app', { paths: ['/workspace'] });
+    cached = (request as { messages: { content: string }[] }).messages.at(-1)!.content;
+    return completion();
+  };
+  await expect(createRepositoryBrain({ model: 'test', observe, complete })(project, secrets, () => {})).rejects.toThrow(/submitted plan/);
+  expect(cached).toContain('/workspace?view=all');
+  expect(observe.mock.calls.filter(([, , paths]) => paths.includes('/workspace'))).toHaveLength(1);
+});
+
 type PlanChange = 'role' | 'path' | 'hash' | 'excerpt' | 'unread' | 'unknown-citation' | 'account' | 'reuse' | 'route' | 'selector' | 'route-selector' | 'auto-observe'
-  | 'field-name' | 'field-name-duplicate' | 'field-name-unobserved' | 'unlinked-label'
+  | 'field-name' | 'field-name-duplicate' | 'field-name-unobserved' | 'unlinked-label' | 'missing-expected'
   | 'basis' | 'identity' | 'multiple' | 'source-goal' | 'source-persona' | 'source-input' | 'oracle-goal' | 'oracle-input';
 
 async function setup(route: string, label: string, change?: PlanChange, entryText = '') {
@@ -144,7 +161,7 @@ async function setup(route: string, label: string, change?: PlanChange, entryTex
           : { by: 'label', value: ['selector', 'route-selector'].includes(change ?? '') ? 'Unseen control' : label };
         const cited = ['path', 'hash', 'excerpt', 'unread'].includes(change ?? '') ? evidence
           : change === 'unknown-citation' ? 'S9999' : source.citation;
-        const check = { id: 'saved', label: 'Saved reading', kind: 'field', locator, path: route, expected: '12.9',
+        const check = { id: 'saved', label: 'Saved reading', kind: 'field', locator, path: route, expected: change === 'missing-expected' ? undefined : '12.9',
           phase: 'after_reload', basis: change === 'basis' ? 'test' : 'requirement', sources: [requirement.citation] };
         const journey = { id: 'record', testerId: tester.id, title: 'Log a tide',
           goal: change === 'source-goal' ? `Record a reading based on this code:\n${source.reference.excerpt}`
@@ -338,6 +355,7 @@ describe('repository brain', () => {
     ['unknown-citation', /citation/i],
     ['account', /account/i], ['reuse', /account/i], ['route', /record.*route.*\/invented/i], ['selector', /saved.*locator.*Unseen control/i],
     ['route-selector', /record.*route.*\/invented[\s\S]*saved.*locator.*Unseen control/i],
+    ['missing-expected', /journeys\.0\.checks\.0.*expected value/i],
     ['basis', /basis/i], ['multiple', /one journey/i], ['role', /locator/i],
     ['source-goal', /actor.*source/i], ['source-persona', /actor.*source/i], ['source-input', /actor.*source/i],
     ['oracle-goal', /actor.*oracle/i], ['oracle-input', /actor.*oracle/i],

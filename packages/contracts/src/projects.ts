@@ -16,7 +16,7 @@ export const SourceReferenceSchema=z.object({path:z.string().min(1).max(1000),st
 export type SourceReference=z.infer<typeof SourceReferenceSchema>;
 export type SourceFile={path:string;hash:string;kind:'code'|'test'|'requirement'|'config';language:string;lines:number;symbols:string[];imports:string[]};
 export type RepositoryIndex={root:string;version:string;files:SourceFile[];sourceLines:number;excludedFiles:number;indexedAt:string;changedPaths:string[]};
-export type ProjectObservation={path:string;accountId?:string;text:string;observedAt:string};
+export type ProjectObservation={path:string;requestedPath?:string;accountId?:string;text:string;observedAt:string};
 export const ProjectCheckSchema=z.object({id,label:z.string().min(1).max(150),kind:z.enum(['visible','field','text']),locator:LocatorSchema,expected:scalar.optional(),phase:z.enum(['after_action','after_reload','preserve']),path:z.string().regex(/^\/(?!\/)[^\\]*$/).optional(),basis:z.enum(['requirement','test','implementation']),sources:z.array(SourceReferenceSchema).min(1).max(5)}).strict().superRefine((c,ctx)=>{if(c.phase==='preserve'&&!c.path)ctx.addIssue({code:'custom',message:'Preserved state requires a readback path'});if(c.kind!=='visible'&&c.phase!=='preserve'&&c.expected===undefined)ctx.addIssue({code:'custom',message:'Value checks require an expected value'});});
 export type ProjectCheck=z.infer<typeof ProjectCheckSchema>;
 export const ProjectTesterSchema=z.object({id,name:z.string().min(1).max(80),role:z.string().min(1).max(120),summary:text,accountId:id.optional(),context:ContextPackSchema}).strict();
