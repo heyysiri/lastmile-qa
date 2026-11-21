@@ -18,7 +18,7 @@ export const BrowserActionSchema = z.discriminatedUnion('tool', [
 export type BrowserAction = z.infer<typeof BrowserActionSchema>;
 export type RecordedAction = { action: BrowserAction; url: string; observation: string; urlBefore?:string; focusBefore?:string; routeVersion?:2 };
 export type ReplayPlan = { version: 1; hash: string; sourceRunIds: string[]; scenarioHash: string; buildId: string; actions: RecordedAction[] };
-export type ProjectStageEvidence={id:string;actionStart:number;actionEnd:number;transition:'continue'|'reopen';network:ContextPack['network'];pauseMs:number;modelCalls:number;completed:boolean};
+export type ProjectStageEvidence={id:string;actionStart:number;entryActionEnd:number;actionEnd:number;transition:'continue'|'reopen';network:ContextPack['network'];pauseMs:number;modelCalls:number;completed:boolean};
 export type ExecutionEvidence = {
   buildId: string; scenarioHash: string; policyVersion: string; model: string;
   actions: RecordedAction[]; modelCalls: number; finishedByAgent: boolean;

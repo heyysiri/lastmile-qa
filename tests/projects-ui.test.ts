@@ -25,7 +25,7 @@ describe('dashboard project proxy', () => {
 // Resolve React from the dashboard workspace, which owns the rendering dependency.
 import { createRequire } from 'node:module';
 import { desktopContext } from '../packages/contracts/src/examples';
-import { TesterPersona, JourneyStages } from '../apps/lastmile/components/ProjectEvidence';
+import { TesterPersona, JourneyStages, ContextInvestigation } from '../apps/lastmile/components/ProjectEvidence';
 const dashboardRequire = createRequire(new URL('../apps/lastmile/package.json', import.meta.url));
 const { createElement } = dashboardRequire('react');
 const { renderToStaticMarkup } = dashboardRequire('react-dom/server');
@@ -74,4 +74,10 @@ it('uses recorded network behavior and carries planned network changes into late
 
 it('keeps legacy journeys without stages free of invented stage evidence', () => {
   expect(renderToStaticMarkup(createElement(JourneyStages, { journey: {}, network: { mode: 'normal' } }))).toBe('');
+});
+
+it('explains a controlled network comparison without claiming a proven human cause',()=>{
+ const html=renderToStaticMarkup(createElement(ContextInvestigation,{investigation:{factor:'network',outcome:'likely_trigger',message:'Failures repeated twice; normal network passed twice.',trials:[{condition:'original',repeat:1,results:[]}]}}));
+ expect(html).toContain('Likely network trigger');expect(html).toContain('Failures repeated twice');expect(html).toContain('same recorded actions');
+ expect(html).not.toContain('proven cause');
 });

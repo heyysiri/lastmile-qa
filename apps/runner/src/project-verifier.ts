@@ -139,7 +139,7 @@ export async function verifyProjectChecks(page: Page, checks: ProjectCheck[], or
   for (const [index, check] of ordered) {
     const { id, label, basis, phase, sources } = check;
     const expected = check.expected ?? (check.kind === 'visible' && phase !== 'preserve' ? true : undefined);
-    const result = { id, label, basis, phase, sources, expected };
+    const result = { id, label, basis, phase, sources, expected, ...(check.atStageStart ? {atStageStart:check.atStageStart} : {}) };
     try {
       ready(page, budget);
       if (expected === undefined) throw new CheckUnavailable('Check has no frozen expectation');

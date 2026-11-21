@@ -20,6 +20,7 @@ export function compareProjectReplayResults(source: ProjectRun, results: Project
       || result.run.verdict !== (result.checks.some(check => check.status === 'failed') ? 'failed' : 'passed')) {
       throw new Error('Replay changed a frozen tester, journey, or conclusive check');
     }
+    if(original.journey.stages&&!completeProjectReplayEvidence(original,result))throw new Error('Replay changed a frozen stage transition');
     return original.checks.map(before => {
       const after = result.checks.find(check => check.id === before.id)!;
       const identity = ({ id, expected, label, phase, atStageStart, basis, sources }: typeof before) => ({ id, expected, label, phase, atStageStart, basis, sources });
@@ -65,7 +66,7 @@ function actionIdentity(recorded: RecordedAction) {
   return { action: recorded.action, url: route(recorded.url), urlBefore: route(recorded.urlBefore), focusBefore: recorded.focusBefore, routeVersion: recorded.routeVersion };
 }
 
-function completeEvidence(original: ProjectTesterResult, result: ProjectTesterResult) {
+export function completeProjectReplayEvidence(original: ProjectTesterResult, result: ProjectTesterResult) {
   const before = original.run.evidence;
   const after = result.run.evidence;
   if (!before || !after || !same(original.run.context, result.run.context)
@@ -113,7 +114,7 @@ export function validateProjectContextInvestigation(source: ProjectRun, investig
         const checks = compareProjectReplayResults(expected, trial.results);
         return checks.every(({ before, after }) => ['passed', 'failed'].includes(before.status)
           && (trial.condition === 'original' ? before.status === after.status : after.status === 'passed'))
-          && expected.results.every(original => completeEvidence(original, trial.results.find(result => result.journey.id === original.journey.id)!));
+          && expected.results.every(original => completeProjectReplayEvidence(original, trial.results.find(result => result.journey.id === original.journey.id)!));
       });
   } catch { supported = false; }
   return {

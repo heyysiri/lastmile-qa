@@ -3,7 +3,7 @@ import {mkdir,readFile,writeFile,rm} from 'node:fs/promises';
 import {join,dirname} from 'node:path';
 import type {ContextPack} from '@lastmile/contracts';
 import type {EvidenceRun} from '@lastmile/contracts/runtime';
-import type {Project,ProjectSecrets,ProjectObservation} from '@lastmile/contracts/projects';
+import type {Project,ProjectSecrets,ProjectObservation,ProjectTester} from '@lastmile/contracts/projects';
 import {createBrowserSession,routeIdentity,type BrowserSession} from './browser';
 import {runAgent} from './agent';
 import {hashValue} from './artifacts';
@@ -38,10 +38,12 @@ export function createProjectSessions(options:Options){
  const statePath=(project:Project,identity:string,root?:string)=>join(root??join(options.privateRoot,'sessions',project.id),`${identity}.json`);
  async function load(project:Project,identity:string,root?:string){try{return JSON.parse(await readFile(statePath(project,identity,root),'utf8')) as Awaited<ReturnType<BrowserSession['storageState']>>;}catch{return undefined;}}
  async function save(project:Project,identity:string,state:Awaited<ReturnType<BrowserSession['storageState']>>,root?:string){const path=statePath(project,identity,root);await mkdir(dirname(path),{recursive:true,mode:0o700});await writeFile(path,JSON.stringify(state),{mode:0o600});}
+ const personaIdentity=(tester:ProjectTester)=>`persona-${tester.id}`;
+ const loadPersona=async(project:Project,tester:ProjectTester,root?:string)=>(await load(project,personaIdentity(tester),root))??await load(project,tester.accountId??tester.id,root);
  const privateValues=(secrets:ProjectSecrets)=>secrets.accounts.flatMap(a=>[a.username,a.password]);
- async function authenticate(project:Project,secrets:ProjectSecrets,identity:string,sessionRoot?:string,allowModel=true){
-  const account=secrets.accounts.find(a=>a.id===identity),stored=await load(project,identity,sessionRoot);
-  if(!account){const verified=!project.accounts.some(a=>a.id===identity);return {verified,state:verified?stored:undefined,continued:verified&&Boolean(stored),modelCalls:0};}
+ async function authenticate(project:Project,secrets:ProjectSecrets,identity:string,sessionRoot?:string,allowModel=true,storageIdentity=identity){
+  const account=secrets.accounts.find(a=>a.id===identity),stored=(await load(project,storageIdentity,sessionRoot))??await load(project,identity,sessionRoot);
+  if(!account){const verified=!project.accounts.some(a=>a.id===identity);if(verified&&stored)await save(project,storageIdentity,stored,sessionRoot);return {verified,state:verified?stored:undefined,continued:verified&&Boolean(stored),modelCalls:0};}
   const directory=join(options.privateRoot,'authentication',randomUUID()),signal=AbortSignal.timeout(90000);
   const entryPath=routeIdentity(project.appUrl),origin=new URL(project.appUrl).origin;let session:BrowserSession|undefined,modelCalls=0;
   const unverified=()=>({verified:false,state:undefined,continued:false,modelCalls});
@@ -62,12 +64,12 @@ export function createProjectSessions(options:Options){
     await session.execute({tool:'navigate',path:destination});
     if(!await hasSignedInEvidence(session,account,origin))return unverified();
    }
-   const state=await session.storageState();await save(project,identity,state,sessionRoot);
+   const state=await session.storageState();await save(project,storageIdentity,state,sessionRoot);
    return {verified:true,state,continued,modelCalls};
   }catch{return unverified();}finally{await session?.close().catch(()=>{});await rm(directory,{recursive:true,force:true});}
  }
  async function observe(project:Project,secrets:ProjectSecrets,paths:string[]):Promise<ProjectObservation[]>{
-  const identities=project.accounts.length?project.accounts.map(a=>a.id):['guest'];
+  const identities=[...project.accounts.map(a=>a.id),'guest'];
   const results:ProjectObservation[]=[];
   // Development apps may share a single-writer database across all accounts.
   for(const identity of identities){
@@ -86,5 +88,5 @@ export function createProjectSessions(options:Options){
   }
   return results;
  }
- return {statePath,load,save,authenticate,observe,privateValues};
+ return {statePath,load,loadPersona,personaIdentity,save,authenticate,observe,privateValues};
 }

@@ -137,6 +137,7 @@ async function fixture(proposal: unknown = patch()) {
       result.run.evidence = {
         buildId: 'private', scenarioHash: 'fixture', policyVersion: 'fixture', model: 'none',
         actions: [], modelCalls: 0, finishedByAgent: false, replayCompatible: true,
+        ...(result.run.evidence?.stages?{stages:result.run.evidence.stages.map(stage=>({...stage,modelCalls:0}))}:{}),
       };
     }
     return { ...frozen, metrics: { ...frozen.metrics, modelCalls: 0 } };
@@ -529,6 +530,7 @@ it('includes persona behavior, stage conditions and entry checkpoints in the com
   result.journey.stages = [{ id: 'return', label: 'Return', goal: 'Resume', transition: 'reopen', pauseMs: 10 }];
   result.journey.checks[0].atStageStart = 'return';
   result.checks[0].atStageStart = 'return';
+  result.run.evidence={buildId:'before',scenarioHash:'fixture',policyVersion:'fixture',model:'test',actions:[],modelCalls:1,finishedByAgent:true,stages:[{id:'return',actionStart:0,entryActionEnd:0,actionEnd:0,transition:'reopen',pauseMs:10,modelCalls:1,completed:true,network:result.tester.context.network}]};
   const prepared = await f.runtime.prepare(f.job, secrets);
   expect(prepared.error).toBeUndefined();
   expect(prepared.investigation).toBeUndefined();

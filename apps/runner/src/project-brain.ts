@@ -417,6 +417,7 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
         const accountId = draft.testers.find(tester => tester.id === journey.testerId)?.accountId;
         const observed = (path: string) => observations.filter(item => item.path === path && item.accountId === accountId);
         const route = (path: string, sources: SourceReference[]) => {
+          if(!accountId&&!observed(path).length)issues.push(`Journey ${journey.id}: guest route ${path} needs a matching guest browser observation. Report inaccessible routes as coverage gaps.`);
           if (!routeSchema.safeParse(path).success || (!observed(path).length &&
               !sources.some(ref => kinds.has(ref.path) && routeIn(path, ref.excerpt)))) {
             issues.push(`Journey ${journey.id}: route ${path} requires a source citation or a matching browser observation for the assigned tester. Use observe_app to corroborate this route.`);

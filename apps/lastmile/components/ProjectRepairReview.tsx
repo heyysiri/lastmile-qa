@@ -11,7 +11,7 @@ import { newRequestId } from '../lib/editor';
 import { useJobPolling } from '../lib/evolution';
 import { isActive, usePendingWrite } from '../lib/populations';
 import { canPrepareProjectRepair, projectRepairHref, projectRunHref } from '../lib/projects';
-import { RunFindings, TesterResults } from './ProjectEvidence';
+import { ContextInvestigation, RunFindings, TesterResults } from './ProjectEvidence';
 import { StudioBack, StudioError } from './Studio';
 import { Pending } from './ui';
 
@@ -132,6 +132,7 @@ export function ProjectRepairReview({ id }: { id: string }) {
         {active ? <Pending label={repairStatus(job)} /> : <strong>{repairStatus(job)}</strong>}
       </div>
       <StudioError error={job.error} />
+      {job.investigation && <ContextInvestigation investigation={job.investigation} />}
       {job.verification && <section className="project-report" aria-label="Verification results">
         <h2>Verification results</h2>
         <p>{job.verification.message}</p>

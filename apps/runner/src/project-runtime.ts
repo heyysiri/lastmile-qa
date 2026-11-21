@@ -1,7 +1,10 @@
 import {randomUUID} from 'node:crypto';
-import {mkdir,writeFile,readFile,cp,realpath,rm} from 'node:fs/promises';
+import {mkdir,writeFile,readFile,cp,realpath,rm,readdir,rename} from 'node:fs/promises';
 import {join,resolve,sep} from 'node:path';
 import Database from 'better-sqlite3';
+import {setTimeout as pause} from 'node:timers/promises';
+import type {ProjectStageEvidence,RecordedAction} from '@lastmile/contracts/runtime';
+import {MAX_PROJECT_JOURNEYS,MAX_PROJECT_TESTERS} from '@lastmile/contracts/projects';
 import type {DiscoverProject,Project,ProjectSecrets,ProjectRun,ProjectHistory,ProjectJourney,ProjectTester,ProjectTesterResult,ProjectCheck,ProjectCheckResult,ProjectDiscovery,ProjectRuntime,RepositoryIndex,SourceReference} from '@lastmile/contracts/projects';
 import {createBrowserSession,routeIdentity,type BrowserSession} from './browser';
 import {runAgent} from './agent';
@@ -32,25 +35,25 @@ function releaseDiscovery(fresh:ProjectDiscovery,prior:ProjectTesterResult[],isC
  const journeys=prior.map(r=>r.journey),testers=new Map(prior.map(r=>[r.tester.id,r.tester]));
  const ids=new Set(journeys.map(j=>j.id));
  // Ignore presentation and a prior run's captured value when comparing coverage.
- const coverage=({testerId,entryPath,goal,inputs,checks}:ProjectJourney)=>hashValue({testerId,entryPath,goal,inputs,checks:checks.map(({kind,locator,phase,path,expected})=>hashValue({kind,locator,phase,path,expected:phase==='preserve'?undefined:expected??(kind==='visible'?true:undefined)})).sort()});
+ const coverage=({testerId,entryPath,goal,inputs,checks,stages}:ProjectJourney)=>hashValue({testerId,entryPath,goal,inputs,stages,checks:checks.map(({kind,locator,phase,path,expected,atStageStart})=>hashValue({kind,locator,phase,path,atStageStart,expected:phase==='preserve'?undefined:expected??(kind==='visible'?true:undefined)})).sort()});
  const covered=new Set(journeys.filter(j=>j.checks.every(c=>isCurrent(c)&&(c.phase!=='preserve'||c.expected!==undefined))).map(coverage));
  let omitted=0;
  for(const journey of fresh.plan.journeys){
   const key=coverage(journey);
   if(covered.has(key))continue;
-  if(journeys.length===6){omitted++;continue;}
+  if(journeys.length>=MAX_PROJECT_JOURNEYS||(!testers.has(journey.testerId)&&testers.size>=MAX_PROJECT_TESTERS)){omitted++;continue;}
   const tester=fresh.plan.testers.find(t=>t.id===journey.testerId)!;
   if(!testers.has(tester.id))testers.set(tester.id,tester);
   let id=journey.id;
   for(let n=2;ids.has(id);n++)id=`${journey.id.slice(0,76)}-${n}`;
   ids.add(id);covered.add(key);journeys.push({...journey,id});
  }
- const gaps=omitted?[`${omitted} newly discovered ${omitted===1?'journey was':'journeys were'} omitted because prior coverage filled the six-journey limit.`,...fresh.plan.gaps].slice(0,15):fresh.plan.gaps;
+ const gaps=omitted?[`${omitted} newly discovered ${omitted===1?'journey was':'journeys were'} omitted because prior coverage filled the configured team or journey limit.`,...fresh.plan.gaps].slice(0,15):fresh.plan.gaps;
  return {...fresh,plan:{...fresh.plan,testers:[...testers.values()],journeys,gaps}};
 }
 
-function notEvaluated({id,label,basis,phase,sources,expected}:ProjectCheck,message:string):ProjectCheckResult {
- return {id,label,basis,phase,sources,expected,status:'not_evaluated',message};
+function notEvaluated({id,label,basis,phase,sources,expected,atStageStart}:ProjectCheck,message:string):ProjectCheckResult {
+ return {id,label,basis,phase,sources,expected,...(atStageStart?{atStageStart}:{}),status:'not_evaluated',message};
 }
 
 export function createProjectRuntime(options:Options):ProjectRuntime&{replay:(project:Project,secrets:ProjectSecrets,source:ProjectRun,sessionRoot:string)=>Promise<ProjectRun>}{
@@ -80,7 +83,7 @@ export function createProjectRuntime(options:Options):ProjectRuntime&{replay:(pr
   const directory=join(options.privateRoot,'captures',randomUUID()),signal=AbortSignal.timeout(180000);
   let session:BrowserSession|undefined;
   try{
-   const stored=await sessions.load(project,tester.accountId??tester.id);
+   const stored=await sessions.loadPersona(project,tester);
    session=await createBrowserSession({pack:tester.context,inputs:{},origin:project.appUrl,allowedOrigins:project.allowedOrigins,storageState:stored,redactValues:privateValues,artifactDirectory:directory,signal,onStep:()=>{}});
    const captured=await captureProjectChecks(session.page,needsCapture,new URL(project.appUrl).origin,signal);
    for(const check of captured){
@@ -99,37 +102,109 @@ export function createProjectRuntime(options:Options):ProjectRuntime&{replay:(pr
   run.continuity={populationId:project.id,testerId:tester.id,mode:'continue',initialStateId:'native-session',workflowId:journey.id,preserveStatePaths:[],history:history.filter(h=>h.testerId===tester.id).slice(0,3).map(h=>({runId:h.runId,buildId:'observed-history',goal:h.goal,observation:h.observations.join('\n'),recordedAt:h.createdAt}))};
   run.evidence={buildId:sourceVersion,scenarioHash:hashValue(journey),policyVersion:'project-ui-v1',model:original?'none':options.model,modelCalls:0,actions:[],finishedByAgent:false,...(original?{replayCompatible:false}: {})};
   const directory=join(options.artifactRoot,run.id);await mkdir(directory,{recursive:true});
-  const identity=tester.accountId??tester.id,stored=await sessions.load(project,identity,sessionRoot);let session:BrowserSession|undefined,complete=false,message='';let checks:ProjectCheckResult[]=[];
+  const identity=sessions.personaIdentity(tester),stored=await sessions.loadPersona(project,tester,sessionRoot);let session:BrowserSession|undefined,complete=false,message='';let checks:ProjectCheckResult[]=[];
   const signal=AbortSignal.timeout(180000),privateValues=sessions.privateValues(secrets).filter(Boolean);
+  const completedActions:RecordedAction[]=[];
+  let storage=stored,segment=0,segmentDirectory=directory,segmentPrefix='';
+  const actionCount=()=>completedActions.length+(session?.actions.length??0);
+  const open=async(network:ProjectTester['context']['network'])=>{
+   segmentPrefix=journey.stages?`visit-${++segment}-`:'';
+   segmentDirectory=journey.stages?join(directory,`visit-${segment}`):directory;
+   await mkdir(segmentDirectory,{recursive:true});
+   session=await createBrowserSession({pack:{...tester.context,network},inputs:journey.inputs,origin:project.appUrl,allowedOrigins:project.allowedOrigins,storageState:storage,redactValues:privateValues,artifactDirectory:segmentDirectory,signal,actionLimit:40-run.steps.length,onStep:step=>{run.steps.push({...step,index:run.steps.length+1,screenshot:step.screenshot?`${run.id}/${segmentPrefix}${step.screenshot}`:undefined});}});
+  };
+  const close=async()=>{
+   if(!session)return;
+   const closing=session;session=undefined;
+   completedActions.push(...structuredClone(closing.actions));
+   run.capabilities.push(...structuredClone(closing.capabilities));
+   await closing.close();
+   if(segmentPrefix){
+    for(const name of await readdir(segmentDirectory))if(name!=='trace.zip')await rename(join(segmentDirectory,name),join(directory,segmentPrefix+name));
+    await rm(segmentDirectory,{recursive:true,force:true});
+   }
+  };
+  const replayActions=async(actions:RecordedAction[])=>{
+   for(const recorded of actions){
+    const versioned=recorded.routeVersion===2,navigation=recorded.action.tool==='navigate';
+    if(!navigation)await session!.refreshObservation();
+    if(versioned||!navigation){
+     const position=await session!.inspectReplayPosition(),current=versioned?position.url:new URL(session!.page.url()).pathname;
+     if(recorded.urlBefore&&current!==recorded.urlBefore)throw new Error('Replay reached a different page before an action');
+     if(recorded.action.tool==='pressKey'&&recorded.focusBefore&&position.focus!==recorded.focusBefore)throw new Error('Replay keyboard focus changed');
+    }
+    await session!.execute(recorded.action);
+    if(versioned&&(await session!.inspectReplayPosition()).url!==routeIdentity(recorded.url))throw new Error('Replay reached a different page after an action');
+   }
+  };
+  const verify=async(selected:ProjectCheck[])=>{
+   checks.push(...await verifyProjectChecks(session!.page,selected.filter(c=>!unavailable.has(c.id)),new URL(project.appUrl).origin,signal));
+  };
   try{
    if(blocked)throw new Error(blocked);
-   session=await createBrowserSession({pack:tester.context,inputs:journey.inputs,origin:project.appUrl,allowedOrigins:project.allowedOrigins,storageState:stored,redactValues:privateValues,artifactDirectory:directory,signal,onStep:step=>{run.steps.push({...step,screenshot:step.screenshot?`${run.id}/${step.screenshot}`:undefined});}});
-   if(original){
-    // Repair receives private copies of the before-run sessions and frozen values. No agent participates.
-    const actions=original.run.evidence?.actions;if(!actions?.length)throw new Error('Recorded browser actions are unavailable');
-    for(const recorded of actions){
-     const versioned=recorded.routeVersion===2;
-     const navigation=recorded.action.tool==='navigate';
-     if(!navigation)await session.refreshObservation();
-     if(versioned||!navigation){
-      const position=await session.inspectReplayPosition();
-      const current=versioned?position.url:new URL(session.page.url()).pathname;
-      if(recorded.urlBefore&&current!==recorded.urlBefore)throw new Error('Replay reached a different page before an action');
-      if(recorded.action.tool==='pressKey'&&recorded.focusBefore&&position.focus!==recorded.focusBefore)throw new Error('Replay keyboard focus changed');
+   if(journey.stages){
+    const traces=original?.run.evidence?.stages,actions=original?.run.evidence?.actions;
+    let expectedStart=0,network=tester.context.network;
+    if(original){
+     if(!traces||traces.length!==journey.stages.length||!actions?.length)throw new Error('Recorded stage transitions are unavailable');
+     for(const [i,stage] of journey.stages.entries()){
+      const trace=traces[i];network=stage.network??network;
+      if(trace.id!==stage.id||trace.transition!==stage.transition||hashValue(trace.network)!==hashValue(network)||trace.pauseMs!==(stage.pauseMs??0)||!trace.completed||!Number.isInteger(trace.entryActionEnd)||trace.entryActionEnd<trace.actionStart||trace.entryActionEnd>trace.actionEnd||trace.actionStart!==expectedStart||!Number.isInteger(trace.actionEnd)||trace.actionEnd>actions.length)throw new Error('Recorded stage transitions do not match the frozen journey');
+      expectedStart=trace.actionEnd;
      }
-     await session.execute(recorded.action);
-     if(versioned&&(await session.inspectReplayPosition()).url!==routeIdentity(recorded.url))throw new Error('Replay reached a different page after an action');
+     if(expectedStart!==actions.length)throw new Error('Recorded actions are outside their stages');
     }
-    complete=true;run.evidence.replayCompatible=true;
+    network=tester.context.network;run.evidence.stages=[];
+    for(const [i,stage] of journey.stages.entries()){
+     signal.throwIfAborted();
+     if(!original&&run.evidence.modelCalls>=20)throw new Error('Journey model call budget exhausted');
+     network=stage.network??network;
+     let destination=stage.entryPath;
+     if(session&&stage.transition==='reopen'){
+      destination??=routeIdentity(session.page.url());storage=await session.storageState();await close();
+     }
+     if(stage.pauseMs)await pause(stage.pauseMs,undefined,{signal});
+     if(!session)await open(network);else await session.setConnectivity(network);
+     const trace:ProjectStageEvidence={id:stage.id,transition:stage.transition,network:structuredClone(network),pauseMs:stage.pauseMs??0,actionStart:actionCount(),entryActionEnd:actionCount(),actionEnd:actionCount(),modelCalls:0,completed:false};
+     run.evidence.stages.push(trace);
+     try{
+      if(original){const frozen=traces![i];await replayActions(actions!.slice(frozen.actionStart,frozen.entryActionEnd));}
+      else if(i===0||stage.transition==='reopen'||destination)await session!.execute({tool:'navigate',path:destination??journey.entryPath});
+      trace.entryActionEnd=actionCount();
+      const entryUrl=routeIdentity(session!.page.url());
+      await verify(journey.checks.filter(c=>c.atStageStart===stage.id));
+      if(original){const frozen=traces![i];await replayActions(actions!.slice(frozen.entryActionEnd,frozen.actionEnd));trace.completed=true;}
+      else{
+       // Readback checks may visit another record; restore the actor's entry without hiding a failed entry check.
+       if(routeIdentity(session!.page.url())!==entryUrl)await session!.execute({tool:'navigate',path:entryUrl});
+       const episode={...run,scenario:{...run.scenario,goal:stage.goal},context:{...run.context,network}};
+       const result=await actor(session!,episode,{apiKey:options.apiKey,model:options.model,signal,modelCallLimit:20-run.evidence.modelCalls});
+       trace.modelCalls=result.modelCalls;run.evidence.modelCalls+=result.modelCalls;trace.completed=result.finished;message=result.reason;
+       if(!result.finished)throw new Error(result.reason||'The stage did not finish');
+      }
+     }finally{trace.actionEnd=actionCount();}
+    }
+    complete=true;run.evidence.finishedByAgent=!original;
+    if(original)run.evidence.replayCompatible=true;
+    await verify(journey.checks.filter(c=>!c.atStageStart));
    }else{
-    await session.execute({tool:'navigate',path:journey.entryPath});
-    const result=await actor(session,run,{apiKey:options.apiKey,model:options.model,signal});
-    complete=result.finished;message=result.reason;run.evidence.modelCalls=result.modelCalls;run.evidence.finishedByAgent=result.finished;
+    await open(tester.context.network);
+    if(original){
+     const actions=original.run.evidence?.actions;if(!actions?.length||original.run.evidence?.stages)throw new Error('Recorded browser actions are unavailable');
+     await replayActions(actions);complete=true;run.evidence.replayCompatible=true;
+    }else{
+     await session!.execute({tool:'navigate',path:journey.entryPath});
+     const result=await actor(session!,run,{apiKey:options.apiKey,model:options.model,signal});
+     complete=result.finished;message=result.reason;run.evidence.modelCalls=result.modelCalls;run.evidence.finishedByAgent=result.finished;
+    }
+    await verify(journey.checks);
    }
-   checks=await verifyProjectChecks(session.page,journey.checks.filter(c=>!unavailable.has(c.id)),new URL(project.appUrl).origin,signal);
-   await sessions.save(project,identity,await session.storageState(),sessionRoot);
-  }catch(error){complete=false;message=error instanceof Error?error.message:'Browser execution unavailable';}
-  finally{if(session){run.evidence.actions=structuredClone(session.actions);run.capabilities=structuredClone(session.capabilities);await session.close().catch(()=>{complete=false;message='Browser evidence could not be saved';});}}
+   await sessions.save(project,identity,await session!.storageState(),sessionRoot);
+  }catch(error){complete=false;if(original)run.evidence.replayCompatible=false;message=error instanceof Error?error.message:'Browser execution unavailable';}
+  finally{
+   await close().catch(()=>{complete=false;if(original)run.evidence!.replayCompatible=false;message='Browser evidence could not be saved';});
+   run.evidence.actions=completedActions;
+  }
   const redact=(value:string)=>privateValues.reduce((text,secret)=>text.replaceAll(secret,'[private]'),value);
   checks=journey.checks.map(c=>{
    const result=checks.find(check=>check.id===c.id);
@@ -181,7 +256,7 @@ export function createProjectRuntime(options:Options):ProjectRuntime&{replay:(pr
   const testers=new Map(discovery.plan.testers.map(t=>[t.id,t]));
   const authenticated=new Map<string,boolean>();
   for(const tester of discovery.plan.testers){
-   const auth=await sessions.authenticate(project,secrets,tester.accountId??tester.id);run.metrics.modelCalls+=auth.modelCalls;
+   const auth=await sessions.authenticate(project,secrets,tester.accountId??tester.id,undefined,true,sessions.personaIdentity(tester));run.metrics.modelCalls+=auth.modelCalls;
    authenticated.set(tester.id,auth.verified);
   }
   await snapshot(project,run,index);
@@ -209,7 +284,7 @@ export function createProjectRuntime(options:Options):ProjectRuntime&{replay:(pr
  async function replay(project:Project,secrets:ProjectSecrets,source:ProjectRun,sessionRoot:string){
   const run:ProjectRun={...structuredClone(source),id:randomUUID(),results:[],findings:[],status:'running',error:undefined,metrics:{elapsedMs:0,modelCalls:0,browserActions:0,passed:0,failed:0,inconclusive:0}};const start=Date.now();
   // Session storage origins include ports, unlike cookies. Rebind only the original app origin in the private snapshot.
-  for(const tester of source.discovery?.plan.testers??source.results.map(r=>r.tester)){const identity=tester.accountId??tester.id,state=await sessions.load(project,identity,sessionRoot);if(state){const sourceOrigin=new URL(source.results[0]?.run.evidence?.actions.find(a=>a.action.tool==='navigate')?.url??project.appUrl).origin;for(const item of state.origins)if(item.origin===sourceOrigin)item.origin=new URL(project.appUrl).origin;await sessions.save(project,identity,state,sessionRoot);}}
+  for(const tester of source.discovery?.plan.testers??source.results.map(r=>r.tester)){const identity=sessions.personaIdentity(tester),state=await sessions.loadPersona(project,tester,sessionRoot);if(state){const sourceOrigin=new URL(source.results[0]?.run.evidence?.actions.find(a=>a.action.tool==='navigate')?.url??project.appUrl).origin;for(const item of state.origins)if(item.origin===sourceOrigin)item.origin=new URL(project.appUrl).origin;await sessions.save(project,identity,state,sessionRoot);}}
   for(const original of source.results)run.results.push(await testJourney(project,secrets,original.tester,{journey:structuredClone(original.journey),unavailable:new Map()},[],source.sourceVersion!,original,sessionRoot));
   run.status='completed';run.phase='Frozen checks replayed';run.finishedAt=new Date().toISOString();run.metrics.elapsedMs=Date.now()-start;summary(run);return run;
  }

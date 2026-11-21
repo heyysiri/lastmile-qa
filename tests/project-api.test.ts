@@ -114,8 +114,6 @@ it.each([
  ['invalid plan',(d:ProjectDiscovery)=>{d.plan.features=[];}],
  ['duplicate planned checks',(d:ProjectDiscovery)=>{d.plan.journeys[0].checks[1].id=d.plan.journeys[0].checks[0].id;}],
  ['unknown binding',(d:ProjectDiscovery)=>{d.plan.testers[0].accountId='unknown';}],
- ['missing binding',(d:ProjectDiscovery)=>{delete d.plan.testers[0].accountId;}],
- ['reused binding',(d:ProjectDiscovery)=>{d.plan.testers[1].accountId=d.plan.testers[0].accountId;}],
  ['unknown observation account',(d:ProjectDiscovery)=>{d.observations.push({path:'/stock',accountId:'unknown',text:'Stock',observedAt:timestamp});}],
 ])('does not mark discovery ready with %s',async(_name,change)=>{
  const {app,root}=await setup({discover:async project=>{const d=discover(project);change(d);return d;},execute:vi.fn()});
@@ -386,4 +384,31 @@ it('stops automatic preparation failure without looping or verifying a missing p
  await expect.poll(async()=>(await read())[0]?.status).toBe('completed');
  expect((await read())[0]).toMatchObject({error:'Source cannot fit the coding budget'});
  expect(prepare).toHaveBeenCalledTimes(1);expect(verify).not.toHaveBeenCalled();
+});
+
+it('accepts distinct personas sharing supplied access and a guest alongside authenticated testers',async()=>{
+ const {app,root}=await setup({discover:async project=>{
+  const d=discover(project),base=d.plan.testers[0];
+  d.plan.testers.push({...structuredClone(base),id:'returning',name:'Returning seller',context:{...base.context,familiarity:'first_time'}});
+  d.plan.testers.push({...structuredClone(base),id:'guest',name:'Guest',accountId:undefined});
+  for(const testerId of ['returning','guest'])d.plan.journeys.push({...structuredClone(d.plan.journeys[0]),id:testerId,testerId});
+  return d;
+ },execute:vi.fn()});
+ const p=await connect(app,root);
+ await expect.poll(async()=>(await get(app,`/api/projects/${p.id}`)).json().status).not.toBe('discovering');
+ const ready=(await get(app,`/api/projects/${p.id}`)).json();
+ expect(ready.status).toBe('ready');
+ expect(ready.discovery.plan.testers).toHaveLength(3);
+});
+
+it('persists a recomputed investigation without trusting a claimed network trigger',async()=>{
+ const prepare=vi.fn(async()=>({patch,sourceVersion:'a'.repeat(64),investigation:{factor:'network' as const,outcome:'likely_trigger' as const,message:'Unverified claim',trials:[]}}));
+ const {app,root}=await setup({discover:async p=>discover(p),execute:async(_p,_s,r)=>complete(r),repair:{prepare,verify:async job=>replay(job.sourceRun)}});
+ const project=await connect(app,root,{commands:{start:['test-server']},accounts:[...body(root).accounts,controlAccount]});
+ await expect.poll(async()=>(await get(app,`/api/projects/${project.id}`)).json().status).toBe('ready');
+ await post(app,`/api/projects/${project.id}/runs`,{requestId:'investigate',autoRepair:true});
+ const repairs=async()=>(await get(app,`/api/project-repairs?projectId=${project.id}`)).json();
+ await expect.poll(async()=>(await repairs())[0]?.verification?.outcome).toBe('verified');
+ expect((await repairs())[0].investigation).toMatchObject({outcome:'unresolved',trials:[]});
+ expect((await repairs())[0].investigation.message).not.toContain('Unverified claim');
 });

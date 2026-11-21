@@ -72,7 +72,7 @@ it('normalizes stage overrides, evidence and discovery mirrors while preserving 
   const { source } = fixture();
   const result = source.results[0];
   result.journey.stages = [{ id: 'return', label: 'Return', goal: 'Read', transition: 'reopen', pauseMs: 3, network: { mode: 'request_delay', delayMs: 30, pathPrefix: '/'  } }];
-  result.run.evidence!.stages = [{ id: 'return', actionStart: 0, actionEnd: 0, transition: 'reopen', pauseMs: 3, modelCalls: 0, completed: true, network: { mode: 'request_delay', delayMs: 30, pathPrefix: '/'  } }];
+  result.run.evidence!.stages = [{ id: 'return', actionStart: 0, entryActionEnd:0, actionEnd: 0, transition: 'reopen', pauseMs: 3, modelCalls: 0, completed: true, network: { mode: 'request_delay', delayMs: 30, pathPrefix: '/'  } }];
   source.discovery = { plan: { testers: [result.tester], journeys: [result.journey] } } as ProjectRun['discovery'];
   const before = structuredClone(source);
   const variant = investigation.createNormalNetworkVariant(source);
@@ -99,7 +99,7 @@ it.each(['valid', 'missing-entry', 'incomplete', 'gap', 'condition', 'extra-stag
     report.trials.push({ condition, repeat, results: trial.results });
   }
   const stage = report.trials[3].results[0].run.evidence!.stages![0];
-  if (kind === 'missing-entry') delete (stage as typeof stage & {entryActionEnd?:number}).entryActionEnd;
+  if (kind === 'missing-entry') delete (stage as {entryActionEnd?:number}).entryActionEnd;
   if (kind === 'incomplete') stage.completed = false;
   if (kind === 'gap') stage.actionStart = 1;
   if (kind === 'condition') stage.network = { mode: 'request_delay', delayMs: 20, pathPrefix: '/'  };
@@ -133,4 +133,14 @@ it('rejects a changed route even when the worker claims compatible replay', () =
 it.each([undefined, null, {}, { trials: null }])('normalizes malformed investigation containers without throwing: %j', report => {
   const { source } = fixture();
   expect(investigation.validateProjectContextInvestigation(source, report as unknown as ProjectContextInvestigation)).toMatchObject({ outcome: 'unresolved', trials: [] });
+});
+
+it('refuses a repair replay that omits a required leave-and-return transition even when checks pass',()=>{
+ const {source}=fixture();
+ for(const result of source.results){
+  result.journey.stages=[{id:'return',label:'Return',goal:'Read',transition:'reopen'}];
+  result.run.evidence!.stages=[{id:'return',actionStart:0,entryActionEnd:0,actionEnd:0,transition:'reopen',network:result.tester.context.network,pauseMs:0,modelCalls:0,completed:true}];
+ }
+ const results=structuredClone(source.results);delete results[0].run.evidence!.stages;
+ expect(()=>investigation.compareProjectReplayResults(source,results)).toThrow(/stage|transition/i);
 });

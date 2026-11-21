@@ -2,6 +2,7 @@ import {randomUUID} from 'node:crypto';
 import type Database from 'better-sqlite3';
 import {ProjectJourneySchema,ProjectPlanSchema,type ConnectProjectRequest,type Project,type ProjectDetail,type ProjectDiscovery,type ProjectFinding,type ProjectHistory,type ProjectJourney,type ProjectRepair,type ProjectRepairRequest,type ProjectRun,type ProjectRunRequest,type ProjectRuntime,type ProjectSecrets,type ProjectTester,type ProjectTesterResult} from '@lastmile/contracts/projects';
 import {PatchProposalSchema} from '@lastmile/contracts/evolution';
+import {completeProjectReplayEvidence,validateProjectContextInvestigation} from './project-context-investigation';
 import {classifyOutcome} from './outcome';
 import {hashValue} from './artifacts';import {RunnerError} from './store';
 type Job={id:string;projectId:string;requestId:string;kind:'discover'|'run'|'repair';status:'queued'|'running'|'completed'|'interrupted';data:unknown};
@@ -12,11 +13,9 @@ function validateDiscovery(discovery:ProjectDiscovery,project:Project,previous?:
  const plan=ProjectPlanSchema.safeParse(discovery?.plan);
  if(!plan.success||!discovery.index?.version)throw new Error('Discovery returned an invalid project plan');
  const accounts=new Set(project.accounts.map(account=>account.id));
- const bound=new Set<string>();
  for(const {accountId} of plan.data.testers){
-  if(accounts.size ? !accountId||!accounts.has(accountId)||bound.has(accountId) : accountId!==undefined)
+  if(accountId!==undefined&&!accounts.has(accountId))
    throw new Error('Discovery returned invalid tester account bindings');
-  if(accountId)bound.add(accountId);
  }
  if(discovery.observations.some(({accountId})=>accountId!==undefined&&!accounts.has(accountId))||
     previous?.plan.testers.some(old=>!plan.data.testers.some(tester=>tester.id===old.id&&tester.accountId===old.accountId)))
@@ -50,7 +49,7 @@ function matchesResult(result:ProjectTesterResult,tester:ProjectTester,journey:P
   if(!same(captured?{...definition,expected:undefined}:definition,frozen))return false;
   const check=checks.find(check=>check.id===frozen.id);
   const assertion=run.assertions.find(assertion=>assertion.id===frozen.id);
-  if(!check||!assertion||check.label!==frozen.label||check.basis!==frozen.basis||check.phase!==frozen.phase||
+  if(!check||!assertion||check.label!==frozen.label||check.basis!==frozen.basis||check.phase!==frozen.phase||check.atStageStart!==frozen.atStageStart||
      !same(check.sources,frozen.sources)||assertion.status!==check.status||
      assertion.expected!==check.expected||assertion.actual!==check.actual)return false;
   const visible=frozen.kind==='visible';
@@ -114,6 +113,7 @@ function replayOutcome(source:ProjectRun,results:ProjectTesterResult[]) {
   const actions=frozen.run.evidence?.actions;
   if(!result||!actions?.length||source.results.some(({run})=>run.id===result.run.id)||
      !matchesResult(result,frozen.tester,frozen.journey,false)||
+     (Boolean(frozen.journey.stages)&&!completeProjectReplayEvidence(frozen,result))||
      result.run.executionMode!=='deterministic'||result.run.evidence?.modelCalls!==0||
      result.run.evidence.replayCompatible!==true||
      !same(result.run.evidence.actions.map(({action})=>action),actions.map(({action})=>action))||
@@ -214,11 +214,13 @@ export function createProjectStore(db:Database.Database){
     requireRepairSource(repair.sourceRun,repair.project);
     if(repair.phase==='prepare'){
      const proposal=await runtime.repair.prepare(structuredClone(repair),privateData);
+     const investigation=proposal.investigation?validateProjectContextInvestigation(repair.sourceRun,proposal.investigation):undefined;
+     if(investigation)saveRepair({...repair,investigation,status:'running'});
      if(proposal.error)throw new Error(proposal.error);
      const patch=reviewablePatch(proposal.patch);
      if(!patch)throw new Error('Repair worker did not return a reviewable patch');
      db.transaction(()=>{
-      saveRepair({...repair,patch,sourceVersion:proposal.sourceVersion,status:'awaiting_review'});
+      saveRepair({...repair,patch,investigation,sourceVersion:proposal.sourceVersion,status:'awaiting_review'});
       if(repair.request.automatic){
        db.prepare("UPDATE dev_project_jobs SET status='completed' WHERE id=?").run(job.id);
        verifyRepair(repair.id,{requestId:`auto-${repair.id}`,patchHash:patch.hash});

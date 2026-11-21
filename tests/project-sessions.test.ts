@@ -61,7 +61,7 @@ it('uses the configured query and fragment to sign in through an email-first UI'
  });
  const service=createProjectSessions({privateRoot:root,model:'test',actor});
  expect(await service.authenticate(project,secrets,'account')).toMatchObject({verified:true,continued:false,modelCalls:1});
- expect(await service.observe(project,secrets,['/start?next=stock#signin'])).toMatchObject([{accountId:'account',path:'/start?next=stock#signin',text:expect.stringContaining('Sign out')}]);
+ expect(await service.observe(project,secrets,['/start?next=stock#signin'])).toEqual(expect.arrayContaining([expect.objectContaining({accountId:'account',path:'/start?next=stock#signin',text:expect.stringContaining('Sign out')})]));
  expect(actor).toHaveBeenCalledTimes(1);
 },15000);
 
@@ -79,7 +79,7 @@ it('does not store or attribute a public landing session when the login actor fi
  }});
  expect(await service.authenticate(project,secrets,'account')).toMatchObject({verified:false,continued:false,modelCalls:1});
  expect(await service.load(project,'account')).toBeUndefined();
- expect(await service.observe(project,secrets,['/'])).toEqual([]);
+ expect(await service.observe(project,secrets,['/'])).toEqual([expect.objectContaining({accountId:undefined,text:expect.stringContaining('Welcome')})]);
 },15000);
 
 it('observes collapsed navigation links without opening content or form controls',async()=>{
@@ -116,5 +116,26 @@ it('observes both accounts without overlapping login writes on a single-writer d
  const project:Project={id:'serial',name:'Shop',repositoryPath:root,brief:'Review profiles',requirements:'',createdAt:'now',updatedAt:'now',status:'ready',progress:'Ready',appUrl:origin,allowedOrigins:[],accounts:accounts.map(({id,label})=>({id,label}))};
  const service=createProjectSessions({privateRoot:root,model:'test',actor:async session=>{await session.execute({tool:'click',locator:{by:'role',value:'link',name:'Sign in'}});return {finished:true,modelCalls:1,reason:'Done'};}});
  const observations=await service.observe(project,{accounts},['/']);
- expect(collisions).toBe(0);expect(observations.map(o=>o.accountId)).toEqual(['a','b']);
+ expect(collisions).toBe(0);expect(observations.map(o=>o.accountId)).toEqual(['a','b',undefined]);
 },20000);
+
+it('keeps two behavioral profiles browser-local state separate while sharing supplied account access',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'persona-sessions-'));roots.push(root);
+ const server=createServer((q,r)=>{r.setHeader('content-type','text/html');if(q.url==='/login'){r.setHeader('set-cookie','signed=1; Path=/');r.end('<button>Sign out</button>');return;}r.end(q.headers.cookie?.includes('signed=1')?'<button>Sign out</button>':'<a href="/login">Sign in</a>');});servers.push(server);await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
+ const origin=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
+ const project:Project={id:'project',name:'Shared access',repositoryPath:root,brief:'Staff',requirements:'',createdAt:'now',updatedAt:'now',status:'ready',progress:'Ready',appUrl:origin,allowedOrigins:[],accounts:[{id:'account',label:'Staff'}]};
+ const secrets:ProjectSecrets={accounts:[{id:'account',label:'Staff',username:'staff-private',password:'password-private'}]};
+ const service=createProjectSessions({privateRoot:root,model:'test',actor:async session=>{await session.execute({tool:'click',locator:{by:'role',value:'link',name:'Sign in'}});return {finished:true,modelCalls:1,reason:'Done'};}});
+ await service.authenticate(project,secrets,'account');
+ const first=await service.authenticate(project,secrets,'account',undefined,true,'persona-one');
+ expect(first.verified).toBe(true);
+ const state=first.state!;state.origins=[{origin,localStorage:[{name:'draft',value:'Only first persona'}]}];await service.save(project,'persona-one',state);
+ const second=await service.authenticate(project,secrets,'account',undefined,true,'persona-two');
+ expect(second.verified).toBe(true);
+ expect(await service.load(project,'persona-two')).toEqual(second.state);
+ expect(JSON.stringify(second.state)).not.toContain('Only first persona');
+ expect(JSON.stringify(await service.load(project,'persona-one'))).toContain('Only first persona');
+ const seen=await service.observe(project,secrets,['/']);
+ expect(seen.find(o=>o.accountId===undefined)?.text).toContain('Sign in');
+ expect(seen.find(o=>o.accountId==='account')?.text).toContain('Sign out');
+},15000);

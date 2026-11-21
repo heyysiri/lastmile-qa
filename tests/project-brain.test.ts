@@ -527,3 +527,10 @@ describe('repository brain', () => {
     expect(complete).toHaveBeenCalledTimes(18);
   });
 });
+
+it('does not infer guest access to a protected route from an unrelated public observation',async()=>{
+ project.accounts=[];secrets={accounts:[]};
+ const test=await setup('/chart-cabinet','High tide','auto-observe');
+ test.observe.mockImplementation(async(_project,_secrets,paths)=>paths.map(path=>({path:path==='/chart-cabinet'?'/login':path,text:'- textbox "High tide"',observedAt:now})));
+ await expect(test.run()).rejects.toThrow(/guest.*route|route.*guest|matching browser observation/i);
+});

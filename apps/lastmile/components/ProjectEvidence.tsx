@@ -1,9 +1,17 @@
 import type {
-  Project, ProjectCheckResult, ProjectDiscovery, ProjectFinding, ProjectJourney, ProjectRun, ProjectTester, ProjectTesterResult, SourceReference,
+  Project, ProjectContextInvestigation, ProjectCheckResult, ProjectDiscovery, ProjectFinding, ProjectJourney, ProjectRun, ProjectTester, ProjectTesterResult, SourceReference,
 } from '@lastmile/contracts/projects';
 import type { ProjectStageEvidence } from '@lastmile/contracts/runtime';
 import { displayValue, fieldName, RunScreenshot, RunSteps } from './RunEvidence';
 import { plural, TesterFace } from './Studio';
+
+export function ContextInvestigation({ investigation }: { investigation: ProjectContextInvestigation }) {
+  return <section className="project-report" aria-label="Network comparison">
+    <h2>{investigation.outcome === 'likely_trigger' ? 'Likely network trigger' : 'Network comparison inconclusive'}</h2>
+    <p>{investigation.message}</p>
+    <p className="field-hint">This comparison uses the same recorded actions and checks in fresh private copies, changing only the network condition.</p>
+  </section>;
+}
 
 export function SourceCitations({ sources }: { sources: SourceReference[] }) {
   if (!sources.length) return null;
@@ -49,7 +57,7 @@ export function TesterAccount({ tester, accounts }: { tester: ProjectTester; acc
   return <span>{account ? `Development account: ${account.label}` : 'Browser profile'}</span>;
 }
 
-function networkDescription(network: ProjectTester['context']['network']) {
+export function networkDescription(network: ProjectTester['context']['network']) {
   switch (network.mode) {
     case 'normal': return 'Normal connection';
     case 'offline': return 'Offline';
@@ -194,6 +202,7 @@ function CheckList({ checks }: { checks: ProjectCheckResult[] }) {
   return <ul className="observed-checks">{checks.map(check => <li key={check.id}>
     <div className="check-title">
       <strong>{check.label}</strong>
+      {check.atStageStart && <small>Checked on return, before the tester acts</small>}
       <span className={`pill pill-${check.status === 'failed' ? 'peach' : check.status === 'passed' ? 'mint' : 'lilac'}`}>
         {check.status === 'not_evaluated' ? 'Not evaluated' : fieldName(check.status)}
       </span>

@@ -1,5 +1,6 @@
 'use client';
 
+import { networkDescription } from './ProjectEvidence';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ArrowUpRight, Camera, CircleCheck, Clock3 } from 'lucide-react';
@@ -105,7 +106,7 @@ function TesterResult({ user, index, run, executionActive }: { user: StudyUser; 
         <dt>Browser locale</dt><dd>{user.context.locale}</dd>
         <dt>Preferred language</dt><dd>{user.context.preferredLanguage}</dd>
         <dt>Motion</dt><dd>{fieldName(user.context.reducedMotion)}</dd>
-        <dt>Network</dt><dd>{user.context.network.mode === 'normal' ? 'Normal' : `+${user.context.network.delayMs} ms on ${user.context.network.pathPrefix}`}</dd>
+        <dt>Network</dt><dd>{networkDescription(user.context.network)}</dd>
         {user.context.knownTerms.length > 0 && <><dt>Known terms</dt><dd>{user.context.knownTerms.join(', ')}</dd></>}
         {Object.entries(run?.inputs ?? user.context.inputs).map(([label, value]) => <div className="snapshot-pair" key={label}><dt>{fieldName(label)}</dt><dd>{displayValue(value)}</dd></div>)}
       </dl>
