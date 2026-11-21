@@ -16,7 +16,7 @@ export const BrowserActionSchema = z.discriminatedUnion('tool', [
   z.object({ tool: z.literal('uploadFixture'), locator: LocatorSchema, input: z.string() }).strict(),
 ]);
 export type BrowserAction = z.infer<typeof BrowserActionSchema>;
-export type RecordedAction = { action: BrowserAction; url: string; observation: string; urlBefore?:string; focusBefore?:string };
+export type RecordedAction = { action: BrowserAction; url: string; observation: string; urlBefore?:string; focusBefore?:string; routeVersion?:2 };
 export type ReplayPlan = { version: 1; hash: string; sourceRunIds: string[]; scenarioHash: string; buildId: string; actions: RecordedAction[] };
 export type ExecutionEvidence = {
   buildId: string; scenarioHash: string; policyVersion: string; model: string;

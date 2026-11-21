@@ -36,7 +36,7 @@ export type ProjectTesterResult={tester:ProjectTester;journey:ProjectJourney;run
 export type ProjectRun={id:string;projectId:string;request:ProjectRunRequest;status:'queued'|'running'|'completed'|'interrupted';phase:string;createdAt:string;finishedAt?:string;sourceVersion?:string;discovery?:ProjectDiscovery;results:ProjectTesterResult[];findings:ProjectFinding[];summary:string;metrics:{elapsedMs:number;modelCalls:number;browserActions:number;passed:number;failed:number;inconclusive:number};error?:string};
 export type ProjectDetail=Project&{runs:ProjectRun[];history:ProjectHistory[]};
 export type DiscoverProject=(project:Project,secrets:ProjectSecrets,onProgress:(message:string)=>void,previous?:ProjectDiscovery)=>Promise<ProjectDiscovery>;
-export type ExecuteProject=(project:Project,secrets:ProjectSecrets,run:ProjectRun,history:ProjectHistory[],onUpdate:(run:ProjectRun)=>void)=>Promise<ProjectRun>;
+export type ExecuteProject=(project:Project,secrets:ProjectSecrets,run:ProjectRun,history:ProjectHistory[],onUpdate:(run:ProjectRun)=>void,previousRun?:ProjectRun)=>Promise<ProjectRun>;
 export const ProjectRepairRequestSchema=z.object({requestId:id,runId:id}).strict();
 export type ProjectRepairRequest=z.infer<typeof ProjectRepairRequestSchema>;
 export type ProjectRepair={id:string;projectId:string;request:ProjectRepairRequest;status:'queued'|'running'|'awaiting_review'|'completed'|'interrupted';phase:'prepare'|'verify';createdAt:string;finishedAt?:string;sourceRun:ProjectRun;project:Project;patch?:PatchProposal;sourceVersion?:string;verificationRequest?:{requestId:string;patchHash:string};verification?:{outcome:'verified'|'rejected'|'inconclusive';message:string;results:ProjectTesterResult[]};error?:string};
