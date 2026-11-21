@@ -17,7 +17,7 @@ export function PopulationsList() {
       <div className="face-scene">{[0, 1, 2].map(index => <TesterFace key={index} index={index} />)}</div>
       <div><h2>Give your testers a place to come back to</h2>
         <p>Save a study, then enroll its testers to give them reusable accounts and a history of what they saw.</p>
-        <Link href="/" className="evidence-link">Create a study <ArrowRight size={16} aria-hidden="true" /></Link>
+        <Link href="/studies" className="evidence-link">Create a study <ArrowRight size={16} aria-hidden="true" /></Link>
       </div>
     </section>}
     <div className="result-grid">
@@ -28,6 +28,6 @@ export function PopulationsList() {
         <span className="evidence-link">Open population <ArrowRight size={16} aria-hidden="true" /></span>
       </Link>)}
     </div>
-    {Boolean(populations.data?.length) && <p className="history-footer"><Link href="/">Create or review a study</Link></p>}
+    {Boolean(populations.data?.length) && <p className="history-footer"><Link href="/studies">Create or review a study</Link></p>}
   </div>;
 }

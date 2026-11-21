@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import './studio.css';
+import './projects.css';
 import { Shell } from '../components/Shell';
 
 export const metadata: Metadata = { title: 'LastMile QA', description: 'Study how synthetic testers experience your connected application' };

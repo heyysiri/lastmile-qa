@@ -30,9 +30,22 @@ export function ExpectedChecks({ scenario, inputs }: { scenario: ScenarioDefinit
   })}</ul>;
 }
 
-export function RunChecks({ run }: { run: RunRecord }) {
+export function RunChecks({ run, collapsePassing = false }: { run: RunRecord; collapsePassing?: boolean }) {
   if (!run.assertions.length) return <p className="muted">No checks have been recorded.</p>;
-  return <ul className="observed-checks">{run.assertions.map(result => {
+  if (!collapsePassing) return <ObservedChecks run={run} checks={run.assertions} />;
+  const passing = run.assertions.filter(result => result.status === 'passed');
+  const other = run.assertions.filter(result => result.status !== 'passed');
+  return <>
+    {other.length > 0 && <ObservedChecks run={run} checks={other} />}
+    {passing.length > 0 && <details className="studio-disclosure">
+      <summary>{passing.length} passed {passing.length === 1 ? 'check' : 'checks'}</summary>
+      <ObservedChecks run={run} checks={passing} />
+    </details>}
+  </>;
+}
+
+function ObservedChecks({ run, checks }: { run: RunRecord; checks: RunRecord['assertions'] }) {
+  return <ul className="observed-checks">{checks.map(result => {
     const check = run.scenario.contract.assertions.find(item => item.id === result.id);
     const tone = result.status === 'passed' ? 'mint' : result.status === 'failed' ? 'peach' : 'lilac';
     return <li key={result.id}>

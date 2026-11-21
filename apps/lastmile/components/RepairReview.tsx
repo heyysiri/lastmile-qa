@@ -61,7 +61,7 @@ export function RepairReview({ id }: { id: string }) {
     {!job && !repair.error && <Pending label="Loading repair…" />}
     {job && execution && status && <>
       <header className="studio-heading review-heading">
-        <div><h1>Repair review</h1><p>{execution.releaseLabel} · {execution.population.label} · {execution.buildId}</p></div>
+        <div><h1>Repair review</h1><p>{execution.releaseLabel} · {execution.population.label}</p></div>
         <span className={`pill pill-${status.tone}`} role="status">{status.label}</span>
       </header>
       <StudioError error={job.error} />
@@ -70,14 +70,18 @@ export function RepairReview({ id }: { id: string }) {
       {patch && <section className="studio-card" aria-labelledby="repair-patch-title">
         <div className="card-heading"><span className="icon-tile lilac"><FileCode2 size={18} aria-hidden="true" /></span><h2 id="repair-patch-title">Proposed patch</h2></div>
         <p>{patch.summary}</p>
-        <div className="release-builds">
-          <div><small>Patch hash</small><code>{patch.hash}</code></div>
-          {job.sourceVersion && <div><small>Source version</small><code>{job.sourceVersion}</code></div>}
-        </div>
+        <details className="studio-disclosure">
+          <summary>Technical details</summary>
+          <div className="release-builds">
+            <div><small>Patch hash</small><code>{patch.hash}</code></div>
+            {job.sourceVersion && <div><small>Source version</small><code>{job.sourceVersion}</code></div>}
+            <div><small>Build ID</small><code>{execution.buildId}</code></div>
+          </div>
+        </details>
         <PatchFiles changes={patch.changes} />
         {mayVerify && <>
           <p className="field-hint">Verification builds the proposal in isolation and replays the original failing cases and passing controls.</p>
-          {write.pending && !write.busy && <p className="field-hint">Recover the original verification request for patch <code>{write.pending.patchHash}</code>.</p>}
+          {write.pending && !write.busy && <p className="field-hint">Recover the original verification request before starting another one.</p>}
           {!health.loading && !ready && !write.pending && <p className="field-hint">Patch verification is unavailable.</p>}
           <StudioError error={health.error} onRetry={health.reload} />
           <button type="button" disabled={!write.ready || write.busy || repair.loading || Boolean(repair.error) || (!ready && !write.pending)}
@@ -132,7 +136,7 @@ function RepairTrials({ title, trials, execution }: { title: string; trials: Rep
           <div className="result-status"><span className={`pill pill-${tone}`}>{fieldName(trial.outcome)}</span></div>
           <p>{trial.message}</p>
           <p className="field-hint">{trial.run.scenario.goal}</p>
-          <RunChecks run={trial.run} />
+          <RunChecks run={trial.run} collapsePassing />
           <RunSteps run={trial.run} />
           {originalId && <div className="population-evidence-links">
             <Link href={`/runs/${encodeURIComponent(originalId)}`} className="evidence-link">Original comparison evidence <ArrowUpRight size={15} aria-hidden="true" /></Link>

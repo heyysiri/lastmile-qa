@@ -22,7 +22,7 @@ export function StudioError({ error, onRetry }: { error: unknown; onRetry?: () =
   </div>;
 }
 
-export function StudioBack({ href = '/', children = 'Studies' }: { href?: string; children?: React.ReactNode }) {
+export function StudioBack({ href = '/studies', children = 'Studies' }: { href?: string; children?: React.ReactNode }) {
   return <Link href={href} className="studio-back"><ArrowLeft size={15} aria-hidden="true" />{children}</Link>;
 }
 

@@ -5,7 +5,7 @@ import type { LaunchPopulationRequest, PopulationDetail, PopulationExecutionDeta
 import type { EvidenceRun } from '../packages/contracts/src/runtime';
 import type { StudyApplication } from '../packages/contracts/src/studies';
 
-test.use({ baseURL: 'http://127.0.0.1:3100' });
+test.use({ baseURL: process.env.STUDIES_TEST_URL ?? 'http://127.0.0.1:3100' });
 
 const createdAt = '2026-11-20T08:00:00.000Z';
 const hash = 'a'.repeat(64);
@@ -216,6 +216,8 @@ test('recovers preparation and verification across reload and shows rejected ret
   await page.reload();
   mock.finishPreparation();
   await expect(page.getByText('Preserve the submitted stock quantity.')).toBeVisible();
+  await expect(page.getByText(hash, { exact: true })).not.toBeVisible();
+  await page.getByText('Technical details', { exact: true }).click();
   await expect(page.getByText(hash, { exact: true })).toBeVisible();
   await page.getByText('src/inventory.ts', { exact: true }).click();
   await expect(page.getByText(/export const stock = 'x/)).toBeVisible();
@@ -224,6 +226,11 @@ test('recovers preparation and verification across reload and shows rejected ret
   await expect(reproduction.getByText('Original failing case')).toBeVisible();
   await expect(reproduction.getByText('Passing control')).toBeVisible();
   await expect(reproduction.getByText('Observed 1')).toBeVisible();
+  const passingChecks = reproduction.getByText('1 passed check', { exact: true });
+  await expect(passingChecks).toBeVisible();
+  await expect(reproduction.getByText('Observed 5')).not.toBeVisible();
+  await passingChecks.click();
+  await expect(reproduction.getByText('Observed 5')).toBeVisible();
   await expect(reproduction.getByRole('link', { name: 'Original comparison evidence' }).first()).toHaveAttribute('href', '/runs/candidate-mina');
   await expect(reproduction.getByRole('link', { name: 'This replay’s screenshot' })).toHaveAttribute('href', '/api/runner/runs/trial-mina/artifacts/final.png');
   expect(mock.verifications).toHaveLength(0);
@@ -249,6 +256,9 @@ test('refreshes a stale patch without sending a second write and distinguishes i
   await page.goto('/repairs/repair-1');
   await page.getByRole('button', { name: 'Verify patch' }).click();
   await expect(page.getByRole('main').getByRole('alert')).toContainText('The patch changed. Review it again.');
+  await expect(page.getByText('Use the updated stock calculation.')).toBeVisible();
+  await expect(page.getByText(newHash, { exact: true })).toBeHidden();
+  await page.getByText('Technical details', { exact: true }).click();
   await expect(page.getByText(newHash, { exact: true })).toBeVisible();
   expect(mock.verifications).toHaveLength(1);
   await page.getByRole('button', { name: 'Verify patch' }).click();

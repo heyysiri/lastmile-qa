@@ -1,3 +1,4 @@
+import type { ConnectProjectRequest, Project, ProjectDetail, ProjectRepair, ProjectRepairRequest, ProjectRun, ProjectRunRequest } from '@lastmile/contracts/projects';
 import type { EvidenceRun, InvestigationRecord, InvestigationRequest } from '@lastmile/contracts/runtime';
 import type { PrepareRepairRequest, RepairJob, SuggestionJob, SuggestJourneysRequest, VerifyRepairRequest } from '@lastmile/contracts/evolution';
 import type { ApplicationContext, EnrollPopulationRequest, LaunchPopulationRequest, Population, PopulationDetail, PopulationExecution, PopulationExecutionDetail } from '@lastmile/contracts/populations';
@@ -5,7 +6,7 @@ import type { GenerateStudyRequestSchema, LaunchStudyRequestSchema, SaveStudyReq
 import type { infer as Infer } from 'zod';
 import type { ContextPack, ScenarioDefinition } from '@lastmile/contracts';
 
-export type Health = { status: 'ok'; modelConfigured: boolean; executionReady: boolean; suggestionsReady?: boolean; repairsReady?: boolean };
+export type Health = { status: 'ok'; modelConfigured: boolean; executionReady: boolean; suggestionsReady?: boolean; repairsReady?: boolean; projectDiscoveryReady?: boolean; projectExecutionReady?: boolean; projectRepairsReady?: boolean };
 export type CapabilityInfo = { factor: string; mode?: string; description?: string; [k: string]: unknown };
 export class ApiFailure extends Error {
   constructor(public status: number, public code: string, message: string) { super(message); }
@@ -33,6 +34,17 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 }
 
 export const api = {
+  projects: () => call<Project[]>('GET', 'projects'),
+  project: (id: string) => call<ProjectDetail>('GET', `projects/${encodeURIComponent(id)}`),
+  projectByRequest: (id: string) => call<Project>('GET', `projects/by-request/${encodeURIComponent(id)}`),
+  connectProject: (request: ConnectProjectRequest) => call<Project>('POST', 'projects', request),
+  refreshProject: (id: string, request: { requestId: string }) => call<Project>('POST', `projects/${encodeURIComponent(id)}/refresh`, request),
+  runProject: (id: string, request: ProjectRunRequest) => call<ProjectRun>('POST', `projects/${encodeURIComponent(id)}/runs`, request),
+  projectRun: (id: string) => call<ProjectRun>('GET', `project-runs/${encodeURIComponent(id)}`),
+  projectRepairs: (projectId: string) => call<ProjectRepair[]>('GET', `project-repairs?projectId=${encodeURIComponent(projectId)}`),
+  projectRepair: (id: string) => call<ProjectRepair>('GET', `project-repairs/${encodeURIComponent(id)}`),
+  prepareProjectRepair: (request: ProjectRepairRequest) => call<ProjectRepair>('POST', 'project-repairs', request),
+  verifyProjectRepair: (id: string, request: VerifyRepairRequest) => call<ProjectRepair>('POST', `project-repairs/${encodeURIComponent(id)}/verify`, request),
   applications: () => call<StudyApplication[]>('GET', 'applications'),
   applicationContext: (id: string) => call<ApplicationContext>('GET', `applications/${encodeURIComponent(id)}/context`),
   populations: () => call<Population[]>('GET', 'populations'),

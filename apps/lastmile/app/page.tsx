@@ -1,2 +1,3 @@
-import { StudyComposer } from '../components/StudyComposer';
-export default function Page() { return <StudyComposer />; }
+import { ProjectsList } from '../components/ProjectsList';
+
+export default function Page() { return <ProjectsList />; }

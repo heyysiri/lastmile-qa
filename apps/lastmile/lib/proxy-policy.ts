@@ -12,6 +12,17 @@ export function resolveProxyTarget(method: string, segments: readonly string[]):
   const [head, id, tail] = segments;
   const path = `/api/${segments.join('/')}`;
   const n = segments.length;
+  if (head === 'projects') {
+    if (method === 'GET' && (n === 1 || (n === 2 && id !== 'by-request') || (n === 3 && id === 'by-request'))) return path;
+    if (method === 'POST' && (n === 1 || (n === 3 && id !== 'by-request' && ['refresh', 'runs'].includes(tail)))) return path;
+    return null;
+  }
+  if (head === 'project-runs') return method === 'GET' && n === 2 ? path : null;
+  if (head === 'project-repairs') {
+    if (method === 'GET' && (n === 1 || n === 2)) return path;
+    if (method === 'POST' && (n === 1 || (n === 3 && tail === 'verify'))) return path;
+    return null;
+  }
   if (n === 3 && head === 'populations' && tail === 'suggestions' && (method === 'GET' || method === 'POST')) return path;
   if (method === 'GET') {
     if ((n === 1 || n === 2) && head === 'repairs') return path;

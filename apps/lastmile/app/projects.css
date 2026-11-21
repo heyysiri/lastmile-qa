@@ -1,0 +1,120 @@
+.project-studio {
+  --project-rule: #d9cce9;
+  --project-plum: #30214d;
+  --project-surface: #f0e9fa;
+  max-width: 1040px;
+  margin-inline: auto;
+}
+.project-studio :is(h1, h2, h3, h4) { color: var(--project-plum); }
+.project-page-heading { margin-bottom: clamp(1.25rem, 3vw, 2rem); }
+.project-page-heading h1 { font-size: clamp(2.15rem, 5vw, 3.75rem); }
+.project-heading-with-action, .project-section-heading, .project-finding-heading {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem 1rem; justify-content: space-between;
+}
+.project-directory {
+  display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+  align-items: start; gap: clamp(1.3rem, 4vw, 3.5rem);
+}
+.project-connect {
+  background: #fff; border: 1px solid var(--project-rule); border-radius: 20px 20px 20px 5px;
+  padding: clamp(1.1rem, 3vw, 1.9rem);
+}
+.project-connect h2, .project-list h2, .project-report h2, .project-section-heading h2 {
+  margin: 0 0 .6rem; font-size: 1.25rem; letter-spacing: -.027em; line-height: 1.2;
+}
+.project-connect > p { color: var(--ink-2); margin-bottom: 1.25rem; }
+.project-connect form > fieldset { margin-bottom: .85rem; }
+.project-disclosure { min-width: 0; border-top: 1px solid var(--project-rule); padding: .55rem 0; }
+.project-disclosure > summary {
+  cursor: pointer; color: var(--violet-ink); font-size: .9rem; font-weight: 660; min-height: 28px;
+}
+.project-disclosure > summary::marker { color: var(--blue); }
+.project-disclosure > :nth-child(2) { margin-top: .45rem; }
+.project-disclosure :is(pre, code) { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+.project-disclosure pre {
+  background: #f8f5fb; padding: .7rem; border-radius: 6px; max-height: 26rem; overflow: auto;
+}
+.project-setup .field { margin-top: .65rem; }
+.project-account { padding: .8rem 0 .25rem; border-bottom: 1px solid var(--line); }
+.project-account legend { font-size: .85rem; font-weight: 650; }
+.project-actions { padding-top: .65rem; }
+.project-actions .field-hint { margin-top: 0; }
+.project-list { padding-top: .65rem; }
+.project-list > ul, .project-sources, .project-journeys, .project-history-list, .project-feature-list {
+  margin: 0; padding: 0; list-style: none;
+}
+.project-list li { border-top: 1px solid var(--project-rule); }
+.project-list li a {
+  text-decoration: none; color: var(--ink); min-height: 64px;
+  display: flex; align-items: center; gap: .6rem; padding: .75rem .2rem;
+}
+.project-list li a:hover strong { text-decoration: underline; }
+.project-list li a > span:first-child { flex: 1; min-width: 0; }
+.project-list li a > svg { flex: none; color: var(--blue); }
+.project-list li small, .project-list-status { display: block; font-size: .79rem; color: var(--ink-2); }
+.project-team { padding: clamp(1rem, 3vw, 1.7rem); background: var(--project-surface); border-radius: 20px 20px 20px 5px; }
+.project-team-roster { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 186px), 1fr)); gap: .75rem; }
+.project-team-roster article {
+  min-width: 0; display: flex; align-items: center; gap: .7rem; padding: .72rem 0;
+}
+.project-team h3, .project-team p, .project-result h4, .project-result p { margin: 0; }
+.project-team small, .project-finding-role, .project-result header p { color: var(--ink-2); font-size: .83rem; }
+.project-understanding { border-top: 1px solid var(--project-rule); margin-top: .85rem; padding-top: 1rem; }
+.project-feature-list { display: flex; gap: .35rem .5rem; flex-wrap: wrap; margin: .2rem 0 .85rem; }
+.project-feature-list li {
+  padding: .24rem .64rem; border: 1px solid var(--project-rule); border-radius: 999px;
+  background: #fff; font-size: .83rem; max-width: 100%;
+}
+.project-understanding .project-disclosure:last-child { padding-bottom: 0; }
+.project-journeys li, .project-sources > li, .project-history-list > li { padding: .55rem 0; border-bottom: 1px solid var(--project-rule); }
+.project-journeys li p { margin: .2rem 0 .45rem; }
+.project-progress {
+  border-left: 4px solid var(--blue); background: var(--project-surface); padding: .8rem 1rem;
+  border-radius: 0 9px 9px 0; margin-bottom: 1rem;
+}
+.project-progress p { margin: 0; }
+.project-progress ul { margin-block: .5rem 0; padding-left: 1.1rem; }
+.project-progress button + button { margin-inline-start: .6rem; }
+.project-report-link { margin-bottom: .5rem; font-weight: 620; font-size: .86rem; }
+.project-report { border-top: 2px solid var(--project-rule); padding-top: 1rem; margin-bottom: 1.35rem; }
+.project-report > .project-disclosure { margin-top: .7rem; }
+.project-summary { color: var(--ink-2); }
+.project-finding {
+  background: #fff; padding: clamp(.85rem, 2.8vw, 1.35rem); border: 1px solid var(--line);
+  border-left: 4px solid #a88ad4; border-radius: 4px 13px 13px 4px; margin-bottom: .75rem;
+}
+.project-finding[data-confidence="confirmed"] { border-left-color: #c86b42; }
+.project-finding-heading h3 { font-size: clamp(1.08rem, 2vw, 1.26rem); margin: 0; }
+.project-finding-role { margin-top: .3rem; }
+.project-finding > .project-disclosure:last-child { padding-bottom: 0; }
+.project-report-action:has(.project-repair-action) { margin: .9rem 0 1.3rem; }
+.project-results > h3 { font-size: 1.03rem; }
+.project-tester-results { display: grid; gap: .8rem; }
+.project-result { min-width: 0; border: 1px solid var(--line); background: #fff; border-radius: 12px; padding: 1rem; }
+.project-result > .tester-heading { padding: 0; }
+.project-result > p { margin: .68rem 0; }
+.project-result .observed-checks { margin: .6rem 0; }
+.project-result .project-disclosure, .project-result .run-steps { margin: .28rem 0 0; }
+.project-result .observed-checks .project-disclosure { margin-top: .5rem; }
+.project-result .observed-checks .project-disclosure p { margin: .2rem 0; }
+.project-metrics { display: flex; flex-wrap: wrap; gap: 1rem 2rem; }
+.project-metrics dt { font-weight: 690; margin-bottom: .25rem; }
+.project-metrics dd { margin: 0; color: var(--ink-2); }
+.project-refresh { margin: 1rem 0; }
+.project-history { margin-top: 1rem; }
+.project-patch .patch-sources { margin-top: .6rem; }
+.project-patch .project-diff { padding: 0; }
+.project-diff :is(del, ins) { display: block; text-decoration: none; padding: 0 .6rem; }
+.project-diff del { background: var(--bad-soft); color: #6f1a20; }
+.project-diff ins { background: var(--teal-soft); color: #0d4a42; }
+
+@media (max-width: 720px) {
+  .project-directory { grid-template-columns: minmax(0, 1fr); }
+  .project-list { padding-top: .25rem; }
+  .project-list.has-projects { grid-row: 1; }
+}
+@media (max-width: 425px) {
+  .project-shell .nav { order: initial; width: auto; margin-left: auto; }
+  .project-shell .nav > a, .project-shell .side-foot { display: none; }
+  .project-studio .project-page-heading { margin-bottom: 1.15rem; }
+}

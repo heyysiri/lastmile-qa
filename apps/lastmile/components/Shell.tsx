@@ -2,10 +2,13 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ChevronDown, FlaskConical, History, SlidersHorizontal, UsersRound } from 'lucide-react';
+import { ChevronDown, FlaskConical, Folders, SlidersHorizontal } from 'lucide-react';
 import { api, useLoad } from '../lib/api';
 
 const advanced = [
+  { href: '/studies', label: 'Studies' },
+  { href: '/populations', label: 'Populations' },
+  { href: '/executions', label: 'History' },
   { href: '/scenarios', label: 'Scenarios' },
   { href: '/contexts', label: 'Context packs' },
   { href: '/runs', label: 'Individual runs' },
@@ -13,24 +16,19 @@ const advanced = [
 
 export function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
+  const isProjectPage = path === '/' || path.startsWith('/projects/') || path.startsWith('/project-repairs/');
   const health = useLoad(api.health);
   return (
-    <div className="shell">
+    <div className={isProjectPage ? "shell project-shell" : "shell"}>
       <a className="skip-link" href="#main-content">Skip to content</a>
       <aside className="side">
-        <Link href="/populations" className="brand">
+        <Link href="/" className="brand">
           <span className="brand-mark" aria-hidden="true"><FlaskConical size={20} /><i /></span>
           <span>LastMile<small>QA studio</small></span>
         </Link>
         <nav className="nav" aria-label="Primary">
-          <Link href="/populations" aria-current={path.startsWith('/populations') ? 'page' : undefined}>
-            <UsersRound size={17} aria-hidden="true" /> Populations
-          </Link>
-          <Link href="/" aria-current={path === '/' || /^\/studies\/[^/]+$/.test(path) ? 'page' : undefined}>
-            <FlaskConical size={17} aria-hidden="true" /> Studies
-          </Link>
-          <Link href="/executions" aria-current={path === '/executions' || path.startsWith('/studies/') && path.includes('/executions/') ? 'page' : undefined}>
-            <History size={17} aria-hidden="true" /> History
+          <Link href="/" aria-current={isProjectPage ? 'page' : undefined}>
+            <Folders size={17} aria-hidden="true" /> Projects
           </Link>
           <details className="nav-advanced" open={advanced.some(item => path.startsWith(item.href)) || undefined}>
             <summary><SlidersHorizontal size={16} aria-hidden="true" /> Advanced <ChevronDown size={14} className="nav-chevron" aria-hidden="true" /></summary>

@@ -14,7 +14,7 @@ export function ExecutionHistory() {
       <div className="card-heading"><span className="icon-tile"><History size={18} aria-hidden="true" /></span><h2>Study executions</h2></div>
       {loading && !data && <Pending label="Loading execution history…" />}
       <StudioError error={error} onRetry={reload} />
-      {data?.length === 0 && <p className="empty-state">When you run a study, its results will appear here. <Link href="/">Create a study</Link></p>}
+      {data?.length === 0 && <p className="empty-state">When you run a study, its results will appear here. <Link href="/studies">Create a study</Link></p>}
       <ul className="studio-list">{data?.map(execution => <li key={execution.id}>
         <Link href={executionHref(execution.studyId, execution.id)}>
           <span><strong>{execution.study.title}</strong><small>Revision {execution.studyRevision} · {plural(execution.study.users.length, 'tester')} · {new Date(execution.createdAt).toLocaleString()}</small></span>
