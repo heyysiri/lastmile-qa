@@ -165,6 +165,10 @@ print(build_id())
       origin = server.origin;
       expect(origin).toMatch(/^http:\/\/127\.0\.0\.1:[1-9]\d*$/);
       expect(server.buildId).toBe(releaseId);
+      // Oscar lazily creates this image on the first basket render. Parallel
+      // customers must find it ready before either request starts.
+      expect(await readFile(join(tree, 'sandbox/public/media/image_not_found.jpg')))
+        .toEqual(await readFile(join(tree, 'src/oscar/static/oscar/img/image_not_found.jpg')));
       expect((await fetch(origin + '/api/test/build', { signal })).status).toBe(401);
       expect((await fetch(origin + '/', { signal })).ok).toBe(true);
 

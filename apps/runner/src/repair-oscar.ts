@@ -155,6 +155,11 @@ function startPython(python: string, args: string[], tree: string, env: NodeJS.P
 const withOscarBuild = (python: string): RepairAdapter['withBuild'] => async (options, use) => {
   const { tree, databasePath, testToken, defect, signal } = options;
   signal.throwIfAborted();
+  // Prepare Oscar's fallback image before concurrent basket renders. Its lazy
+  // symlink creation otherwise races on a fresh private media directory.
+  const media = join(tree, 'sandbox/public/media');
+  await mkdir(media, { recursive: true });
+  await copyFile(join(tree, 'src/oscar/static/oscar/img/image_not_found.jpg'), join(media, 'image_not_found.jpg'));
   const env = {
     ...baseEnvironment(),
     OSCAR_ROOT: tree, OSCAR_DATABASE_PATH: databasePath, DJANGO_SETTINGS_MODULE: 'lastmile_settings',
