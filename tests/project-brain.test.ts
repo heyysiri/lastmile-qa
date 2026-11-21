@@ -68,13 +68,14 @@ it('lets the guarded browser corroborate an ordinary inferred route before sourc
  expect(observe.mock.calls.some(([, ,paths])=>paths.includes('/workspace/inventory?view=stock'))).toBe(true);
 });
 
-it('keeps evidence tools available for late validation corrections within the bounded budget', async () => {
+it('requests an initial plan before the budget ends and restores evidence tools for corrections', async () => {
   await writeFile(join(fixture, 'app.py'), 'def readings(): return "Readings"');
   let turn = 0;
   const complete = async (request: unknown) => {
     const body = request as { tools: { function: { name: string } }[]; tool_choice?: unknown };
     expect(body.tool_choice).toBe('required');
-    if (++turn >= 10) expect(body.tools.map(tool => tool.function.name)).toContain('observe_app');
+    if (++turn === 10) expect(body.tools.map(tool => tool.function.name)).toEqual(['submit_plan']);
+    if (turn > 10) expect(body.tools.map(tool => tool.function.name)).toContain('observe_app');
     return call(turn, 'search_source', { query: 'readings' });
   };
   await expect(createRepositoryBrain({ model: 'test', complete })(project, secrets, () => {})).rejects.toThrow(/turn limit/);
@@ -89,7 +90,7 @@ it('returns malformed plan errors to the model without corrupting the provider c
 });
 
 type PlanChange = 'role' | 'path' | 'hash' | 'excerpt' | 'unread' | 'unknown-citation' | 'account' | 'reuse' | 'route' | 'selector' | 'route-selector' | 'auto-observe'
-  | 'field-name' | 'field-name-duplicate' | 'field-name-unobserved'
+  | 'field-name' | 'field-name-duplicate' | 'field-name-unobserved' | 'unlinked-label'
   | 'basis' | 'identity' | 'multiple' | 'source-goal' | 'source-persona' | 'source-input' | 'oracle-goal' | 'oracle-input';
 
 async function setup(route: string, label: string, change?: PlanChange, entryText = '') {
@@ -100,7 +101,8 @@ async function setup(route: string, label: string, change?: PlanChange, entryTex
     path, ...(project.accounts.length ? { accountId } : {}),
     text: (change?.startsWith('field-name') ? '  - generic: navigation filler\n'.repeat(240)
       + (change === 'field-name-unobserved' ? '' : '- fieldName "readings.current"\n'.repeat(change === 'field-name-duplicate' ? 2 : 1)) : '')
-      + `- textbox "${label}"\n${username} ${password}${path === new URL(project.appUrl).pathname ? entryText : ''}`,
+      + (change === 'unlinked-label' ? `- fieldName "readings.current" nearbyLabel "${label}"\n` : `- textbox "${label}"\n`)
+      + `${username} ${password}${path === new URL(project.appUrl).pathname ? entryText : ''}`,
     observedAt: now,
   })));
   let turn = 0;
@@ -177,6 +179,9 @@ async function setup(route: string, label: string, change?: PlanChange, entryTex
 }
 
 describe('repository brain', () => {
+  it('does not treat nearby label text or source markup as an accessible label absent from the observed page', async () => {
+    await expect((await setup('/chart-cabinet', 'High tide', 'unlinked-label')).run()).rejects.toThrow(/locator/i);
+  });
   it('grounds exact field names in observed DOM metadata beyond a long sidebar', async () => {
     const discovery = await (await setup('/chart-cabinet', 'High tide', 'field-name')).run();
     expect(discovery.plan.journeys[0].checks[0].locator).toEqual({ by: 'fieldName', value: 'readings.current' });

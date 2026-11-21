@@ -411,8 +411,10 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
           hypotheses ||= check.basis === 'implementation';
           const sources = [...journey.sources, ...check.sources];
           if (check.path) route(check.path, sources);
-          const corroborated = observed(check.path ?? journey.entryPath).some(item => observedLocator(check, item.text));
-          if (!corroborated && !sources.some(ref => kinds.has(ref.path) && sourcedLocator(check, ref.excerpt))) {
+          const pageObservations = observed(check.path ?? journey.entryPath);
+          const corroborated = pageObservations.some(item => observedLocator(check, item.text));
+          const missingObservedLabel = check.locator.by === 'label' && pageObservations.length > 0;
+          if (!corroborated && (missingObservedLabel || !sources.some(ref => kinds.has(ref.path) && sourcedLocator(check, ref.excerpt)))) {
             issues.push(`Check ${check.id}: locator ${JSON.stringify(check.locator)} on ${check.path ?? journey.entryPath} requires a source citation or matching browser observation for the assigned tester.`);
           }
           unobservedLocators ||= !corroborated;
@@ -458,9 +460,11 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
       override async *stream(messages: Parameters<OpenAIModel['stream']>[0], settings?: StreamOptions) {
         const cancelSignal = AbortSignal.any([signal, AbortSignal.timeout(45_000), ...(settings?.cancelSignal ? [settings.cancelSignal] : [])]);
         try {
+          const toolSpecs = modelCalls === 10
+            ? settings?.toolSpecs?.filter(spec => spec.name === 'submit_plan') : settings?.toolSpecs;
           // A named forced function can return finish_reason="stop" in Chat Completions,
           // which Strands treats as a final answer instead of executing the tool.
-          yield* super.stream(messages, { ...settings, toolChoice: { any: {} }, cancelSignal });
+          yield* super.stream(messages, { ...settings, toolSpecs, toolChoice: { any: {} }, cancelSignal });
         } catch {
           throw new ModelError('Repository discovery provider failed');
         }
