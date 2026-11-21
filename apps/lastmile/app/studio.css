@@ -50,8 +50,8 @@
 .icon-tile.mint { background: var(--mint); color: #265a43; }
 .icon-tile.lilac { background: var(--lilac); }
 .studio button:not(.text-button) { min-height: 42px; font-weight: 690; justify-content: center; border-radius: 10px; padding: .56rem .86rem; transition: background .15s, box-shadow .15s; }
-.studio button:not(.text-button):hover:not(:disabled) { box-shadow: 0 3px 12px #4f2c9e29; }
-.studio button:not(.text-button):not(.secondary):hover:not(:disabled) { background: #44268e; }
+.studio:not(.project-studio,.dialog-content) button:not(.text-button):hover:not(:disabled) { box-shadow: 0 3px 12px #4f2c9e29; }
+.studio:not(.project-studio,.dialog-content) button:not(.text-button):not(.secondary):hover:not(:disabled) { background: #44268e; }
 .text-button { border: 0; background: transparent; color: var(--blue); font-weight: 680; font-size: .86rem; padding: .45rem .35rem; }
 .text-button:hover:not(:disabled) { text-decoration: underline; }
 .plain-fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }

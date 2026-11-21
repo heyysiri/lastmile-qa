@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Play, RotateCw } from 'lucide-react';
+import { ArrowUpRight, CircleCheck, Clock3, Play, RotateCw, Users } from 'lucide-react';
 import { ProjectRunRequestSchema, type ProjectDetail, type ProjectRun } from '@lastmile/contracts/projects';
 import { api, useLoad } from '../lib/api';
 import { newRequestId } from '../lib/editor';
@@ -13,8 +13,10 @@ import { MeasuredResults, RunFindings, SourceCitations, TesterAccount } from './
 import { ProjectRepairAction } from './ProjectRepairReview';
 import { StudioBack, StudioError, TesterFace } from './Studio';
 import { Pending } from './ui';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from './primitives';
 
 export function ProjectHome({ id }: { id: string }) {
+  const [tab, setTab] = useState('results');
   const detail = useLoad(() => api.project(id), [id]);
   const health = useLoad(api.health);
   const project = detail.data;
@@ -49,7 +51,7 @@ export function ProjectHome({ id }: { id: string }) {
     if (!recovering && write.pending) return null;
     return <button type="button"
       disabled={!write.ready || requestInFlight || Boolean(refresh.pending) || detail.loading || Boolean(detail.error) || (!recovering && !canRun)}
-      onClick={() => void write.submit({ requestId: newRequestId(), mode: hasCompleted ? 'release' : 'explore' })}>
+      onClick={() => { setTab('results'); void write.submit({ requestId: newRequestId(), mode: hasCompleted ? 'release' : 'explore' }); }}>
       <Play size={16} aria-hidden="true" />
       {write.busy ? 'Starting team…' : recovering ? 'Recover run request' : hasCompleted ? 'Test changes' : 'Run test team'}
     </button>;
@@ -70,13 +72,14 @@ export function ProjectHome({ id }: { id: string }) {
     {!project && !detail.error && <Pending label="Loading project…" />}
     {project && <>
       <header className="studio-heading project-page-heading project-heading-with-action">
-        <div><h1>{project.name}</h1><p>{project.appUrl}</p></div>
+        <div><h1>{project.name}</h1><a className="project-app-link" href={project.appUrl} target="_blank" rel="noreferrer">{project.appUrl}<ArrowUpRight size={14} aria-hidden="true" /></a></div>
         {!active && project.status === 'ready' && runButton()}
       </header>
       {project.status === 'discovering' && <div className="project-progress"><Pending label={project.progress || 'Discovery queued'} /></div>}
       {project.status === 'failed' && <div className="project-progress">
         <h2>Discovery needs attention</h2>
         <p>{project.error || project.progress || 'Discovery ended before the project was ready.'}</p>
+        {!refresh.pending && refreshButton()}
       </div>}
       {active && <TeamProgress run={active} />}
       {(write.pending && !accepted || refresh.pending) && <div className="project-progress">
@@ -88,14 +91,29 @@ export function ProjectHome({ id }: { id: string }) {
       {project.status === 'ready' && !active && !write.pending && !health.loading && !canRun && <p className="note warn">
         {executionReady ? 'Enable project discovery on the runner to test changes against refreshed source.' : 'Enable project execution on the runner to run the test team.'}
       </p>}
-      {latest && <RunFindings run={latest} project={project}
-        detailLink={<Link className="project-report-link" href={projectRunHref(id, latest.id)}>Shareable results</Link>}
-        actions={<ProjectRepairAction project={project} run={latest} />} />}
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList>
+          <TabsTrigger value="results"><CircleCheck size={16} aria-hidden="true" />Results</TabsTrigger>
+          <TabsTrigger value="team"><Users size={16} aria-hidden="true" />Team</TabsTrigger>
+          <TabsTrigger value="history"><Clock3 size={16} aria-hidden="true" />History</TabsTrigger>
+        </TabsList>
+        <TabsContent value="results">
+          {latest ? <RunFindings run={latest} project={project} title={active ? 'Previous results' : 'Latest findings'}
+            detailLink={<Link className="project-report-link" href={projectRunHref(id, latest.id)}>Shareable results <ArrowUpRight size={14} aria-hidden="true" /></Link>}
+            actions={<ProjectRepairAction project={project} run={latest} />} />
+          : project.status === 'ready' && !active ? <div className="team-ready">
+            <div className="ready-faces" aria-hidden="true">{plan?.testers.map((tester, i) => <TesterFace key={tester.id} index={i} />)}</div>
+            <h2>Your team is ready</h2>
+            <p>{plan?.testers.length ?? 0} testers. {plan?.journeys.length ?? 0} journeys to explore.<br />Run your team to see your app through their eyes.</p>
+            <ul className="project-feature-list">{plan?.features.map(feature => <li key={feature.id}>{feature.title}</li>)}</ul>
+          </div> : null}
+        </TabsContent>
+        <TabsContent value="team">
       {plan && project.status === 'ready' && <section className="project-team" aria-labelledby="team-heading">
         <div className="project-section-heading"><h2 id="team-heading">Your test team</h2></div>
         <div className="project-team-roster">{plan.testers.map((tester, i) => <article key={tester.id}>
           <TesterFace index={i} />
-          <div><h3>{tester.name}</h3><p>{tester.role}</p><small><TesterAccount tester={tester} accounts={project.accounts} /></small></div>
+          <div><h3>{tester.name}</h3><p>{tester.role}</p><p className="tester-bio">{tester.summary}</p><small><TesterAccount tester={tester} accounts={project.accounts} /></small></div>
         </article>)}</div>
         <div className="project-understanding">
           <div className="project-section-heading"><h2>What the team found in the app</h2></div>
@@ -125,20 +143,22 @@ export function ProjectHome({ id }: { id: string }) {
           </details>
         </div>
       </section>}
-      {project.status !== 'discovering' && !active && !refresh.pending && <div className="project-refresh">
+      {project.status === 'ready' && !active && !refresh.pending && <div className="project-refresh">
         {refreshButton()}
         {!discoveryReady && !health.loading && <p className="field-hint">Enable project discovery on the runner to refresh the application understanding.</p>}
       </div>}
+        </TabsContent>
+        <TabsContent value="history"><ProjectHistory project={project} runs={runs.filter(run => !isActive(run.status))} /></TabsContent>
+      </Tabs>
       <StudioError error={health.error} onRetry={health.reload} />
-      <ProjectHistory project={project} runs={runs.filter(run => !isActive(run.status) && run.id !== latest?.id)} />
     </>}
   </div>;
 }
 
 function ProjectHistory({ project, runs }: { project: ProjectDetail; runs: ProjectRun[] }) {
-  if (!runs.length && !project.history.length) return null;
-  return <details className="project-disclosure project-history">
-    <summary>Tester history</summary>
+  if (!runs.length && !project.history.length) return <div className="workspace-empty"><Clock3 size={24} aria-hidden="true" /><p>No runs yet. Your team’s history will appear here.</p></div>;
+  return <section className="project-history">
+    <h2>Tester history</h2>
     {project.history.length > 0 && <ul className="project-history-list">{[...project.history].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((event, index) => {
       const run = project.runs.find(run => run.id === event.runId
         || run.results.some(result => result.run.id === event.runId));
@@ -154,7 +174,7 @@ function ProjectHistory({ project, runs }: { project: ProjectDetail; runs: Proje
     {runs.length > 0 && <ul>{runs.map(run => <li key={run.id}>
       <Link href={projectRunHref(project.id, run.id)}>{run.request.mode === 'explore' ? 'First look' : 'Test changes'} · <time dateTime={run.createdAt}>{new Date(run.createdAt).toLocaleString()}</time></Link>
     </li>)}</ul>}
-  </details>;
+  </section>;
 }
 
 function TeamProgress({ run }: { run: ProjectRun }) {

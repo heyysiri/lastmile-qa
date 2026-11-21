@@ -1,5 +1,3 @@
-import { PopulationsList } from '../../components/PopulationsList';
+import { redirect } from 'next/navigation';
 
-export default function Page() {
-  return <PopulationsList />;
-}
+export default function Page() { redirect('/'); }

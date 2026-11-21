@@ -134,9 +134,7 @@ async function mockApi(page: Page, options: { enrolled?: boolean; disconnectEnro
 
 test('enrolls a saved revision and recovers the same enrollment after a lost response', async ({ page }) => {
   const mock = await mockApi(page, { disconnectEnroll: true });
-  await page.goto('/populations');
-  await page.getByRole('link', { name: 'Create a study' }).click();
-  await page.getByRole('link', { name: study.title }).click();
+  await page.goto('/studies/study-1');
   const enroll = page.getByRole('button', { name: 'Enroll persistent testers' });
   await expect(enroll).toBeEnabled();
   await page.getByLabel('Study title').fill('Unsaved name');
@@ -153,8 +151,7 @@ test('enrolls a saved revision and recovers the same enrollment after a lost res
   expect(mock.enrollments[1]).toEqual(mock.enrollments[0]);
   expect(mock.enrollments[0]).toMatchObject({ studyId: study.id, revision: 2, label: 'Shopkeepers' });
   await expect(page.getByText('Saved study · revision 2')).toBeVisible();
-  await page.getByRole('navigation').getByRole('link', { name: 'Populations' }).click();
-  await expect(page.getByRole('link', { name: /Shopkeepers/ })).toBeVisible();
+
 });
 
 test('edits all next tasks, recovers an accepted launch across reload, and polls live results', async ({ page }) => {
@@ -258,13 +255,6 @@ test('lets users edit a recovered draft after the runner definitively rejects it
   await expect(page).toHaveURL(/\/executions\/journey$/);
   expect(mock.launches[1]).toEqual(mock.launches[0]);
   expect(mock.launches[2].requestId).not.toBe(mock.launches[1].requestId);
-});
-
-test('shows population list fetch failures with retry', async ({ page }) => {
-  await mockApi(page, { listOffline: true });
-  await page.goto('/populations');
-  await expect(page.getByRole('main').getByRole('alert')).toContainText('Runner connection failed.');
-  await expect(page.getByRole('button', { name: 'Try again' })).toBeEnabled();
 });
 
 test('allowlists only the specified population proxy routes', () => {

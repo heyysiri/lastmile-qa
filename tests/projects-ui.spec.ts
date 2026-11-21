@@ -77,7 +77,7 @@ async function mockApi(page: Page, setup?: ProjectDetail) {
   const repairs: ProjectRepairRequest[] = [];
   const verifications: { requestId: string; patchHash: string }[] = [];
   const lookups: string[] = [];
-  const flags = { loseConnect: false, loseRun: false, loseVerify: false, loseRepair: false, stale: false };
+  const flags = { loseConnect: false, loseRun: false, loseVerify: false, loseRepair: false, loseRefresh: false, stale: false };
   await page.route('**/api/runner/**', async route => {
     const request = route.request();
     expect(request.headers()).not.toHaveProperty('authorization');
@@ -107,6 +107,7 @@ async function mockApi(page: Page, setup?: ProjectDetail) {
     if (path === 'projects/desk') return respond(project);
     if (path === 'projects/desk/refresh') {
       refreshes.push(request.postDataJSON().requestId);
+      if (flags.loseRefresh) return route.abort();
       project = { ...project, status: 'discovering', progress: 'Re-indexing changed source files' };
       return respond(project);
     }
@@ -195,6 +196,7 @@ const retryable = (job: ProjectRepair) => job.status === 'interrupted'
   || (job.status === 'completed' && job.verification?.outcome !== 'verified');
 
 async function fillConnection(page: Page) {
+  await page.getByRole('button', { name: 'New project', exact: true }).click();
   await page.getByLabel('Project name').fill('Room Desk');
   await page.getByLabel('Repository path').fill('/work/room-desk');
   await page.getByLabel('Running app URL').fill('http://127.0.0.1:9000');
@@ -212,35 +214,39 @@ for (const width of [375, 1440]) {
     await page.goto('/');
     await fillConnection(page);
     await expectNoOverflow(page);
-    if (process.env.PROJECT_UI_SCREENSHOTS) await page.screenshot({ path: `${process.env.PROJECT_UI_SCREENSHOTS}/connect-${width}.png`, fullPage: true });
+    if (process.env.PROJECT_UI_SCREENSHOTS) await page.screenshot({ path: `${process.env.PROJECT_UI_SCREENSHOTS}/connect-${width}.png`, fullPage: true, animations: 'disabled' });
     await page.getByRole('button', { name: 'Connect project' }).click();
     await expect(page).toHaveURL(/\/projects\/desk$/);
     await expect(page.getByText('Reading reservation screens')).toBeVisible();
     mock.ready();
     await expect(page.getByRole('listitem').filter({ hasText: /^Reservations$/ }).first()).toBeVisible();
-    if (process.env.PROJECT_UI_SCREENSHOTS) await page.screenshot({ path: `${process.env.PROJECT_UI_SCREENSHOTS}/ready-${width}.png`, fullPage: true });
+    if (process.env.PROJECT_UI_SCREENSHOTS) await page.screenshot({ path: `${process.env.PROJECT_UI_SCREENSHOTS}/ready-${width}.png`, fullPage: true, animations: 'disabled' });
     await page.getByRole('button', { name: 'Run test team' }).click();
     expect(mock.runs[0].mode).toBe('explore');
     await expect(page.getByText('Checking the booking form')).toBeVisible();
     mock.finish();
     await expect(page.getByRole('heading', { name: 'Reservation date resets' })).toBeVisible();
+    if (process.env.PROJECT_UI_SCREENSHOTS) await page.screenshot({ path: `${process.env.PROJECT_UI_SCREENSHOTS}/default-findings-${width}.png`, fullPage: true, animations: 'disabled' });
+    await expect(page.getByText('Front desk staff may double book a room.')).toBeHidden();
+    await page.getByText('Why it matters & evidence', { exact: true }).click();
     await expect(page.getByText('Front desk staff may double book a room.')).toBeVisible();
     await expect(page.getByText('Saved reservation', { exact: true })).toBeVisible();
     await expect(page.getByText('Booking notes', { exact: true })).toBeVisible();
     await expect(page.getByText('Time zone preserved')).toBeHidden();
     await expect(page.getByText('12 source files')).toBeHidden();
     await expectNoOverflow(page);
-    if (process.env.PROJECT_UI_SCREENSHOTS) await page.screenshot({ path: `${process.env.PROJECT_UI_SCREENSHOTS}/findings-${width}.png`, fullPage: true });
+    if (process.env.PROJECT_UI_SCREENSHOTS) await page.screenshot({ path: `${process.env.PROJECT_UI_SCREENSHOTS}/findings-${width}.png`, fullPage: true, animations: 'disabled' });
     await page.getByText('Source citations', { exact: true }).first().click();
     await expect(page.getByText(reference.excerpt).first()).toBeVisible();
     await expect(page.getByText(hash, { exact: true }).first()).toBeHidden();
     await page.getByText('Measured results', { exact: true }).click();
     await expect(page.getByText('12 source files')).toBeVisible();
     await expect(page.locator('dt').filter({hasText:/^Journeys$/})).toBeVisible();
-    await page.getByText('Tester history', { exact: true }).click();
+    await page.getByRole('tab', { name: 'History', exact: true }).click();
     await expect(page.getByText('Observed Monday after reload.')).toBeVisible();
     await expect(page.getByRole('link', { name: 'View run results' })).toHaveAttribute('href', '/projects/desk/runs/run-1');
     await expect(page.getByText('Browser profile', { exact: true }).first()).toBeVisible();
+    await page.getByRole('tab', { name: 'Results', exact: true }).click();
     await page.getByRole('link', { name: 'Shareable results' }).click();
     await expect(page).toHaveURL(/\/projects\/desk\/runs\/run-1$/);
     await expect(page.getByRole('heading', { name: finding.title })).toBeVisible();
@@ -291,6 +297,7 @@ test('uses the accepted run after reload and offers test changes and an explicit
   await expect(page.getByText('Suspected', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Prepare fix' })).toHaveCount(0);
   expect(mock.runs).toHaveLength(1);
+  await page.getByRole('tab', { name: 'Team', exact: true }).click();
   await page.getByRole('button', { name: 'Refresh understanding' }).click();
   await expect(page.getByText('Re-indexing changed source files')).toBeVisible();
   const refresh = mock.refreshes[0];
@@ -322,8 +329,7 @@ test('reviews actual patch files, handles a stale patch, and recovers rejected v
   await expect(page).toHaveURL(/\/project-repairs\/fix-1$/);
   expect(mock.repairs[0].runId).toBe('run-1');
   const diff = page.getByLabel(`Changed lines in ${reference.path}`, { exact: true });
-  await expect(diff).toBeHidden();
-  await page.locator('summary').filter({ hasText: reference.path }).click();
+  await expect(diff).toBeVisible();
   await expect(diff.getByText('date: originalDate')).toBeVisible();
   await expect(diff.getByText('date: enteredDate')).toBeVisible();
   await expect(page.getByLabel(`${reference.path} after`, { exact: true })).toBeHidden();
@@ -442,14 +448,77 @@ test('keeps invalid advanced origins in the form until they are corrected', asyn
   expect(mock.connects).toHaveLength(1);
 });
 
-test('keeps legacy studies reachable under Advanced', async ({ page }) => {
-  await mockApi(page);
+test('keeps setup in an accessible dialog and restores focus on dismissal', async ({ page }) => {
+  await mockApi(page, makeProject());
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Repository path')).toBeHidden();
+  await expect(page.getByRole('link', { name: /Room Desk/ })).toBeVisible();
+  if (process.env.PROJECT_UI_SCREENSHOTS) await page.screenshot({ path: `${process.env.PROJECT_UI_SCREENSHOTS}/directory.png`, fullPage: true, animations: 'disabled' });
+  const trigger = page.getByRole('button', { name: 'New project', exact: true });
+  await trigger.click();
+  const dialog = page.getByRole('dialog', { name: 'Connect a project' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel('Project name')).toBeFocused();
+  await dialog.getByRole('button', { name: 'Close setup' }).focus();
+  await page.keyboard.press('Tab');
+  await expect(dialog.getByLabel('Project name')).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(dialog.getByRole('button', { name: 'Close setup' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(trigger).toBeFocused();
+});
+
+test('separates results, team and history with keyboard accessible tabs', async ({ page }) => {
+  await mockApi(page, makeProject());
+  await page.goto('/projects/desk');
+  await expect(page.getByRole('tab', { name: 'Results', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('heading', { name: 'Your test team' })).toBeHidden();
+  await page.getByRole('tab', { name: 'Results', exact: true }).focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('tab', { name: 'Team', exact: true })).toBeFocused();
+  await expect(page.getByRole('heading', { name: 'Your test team' })).toBeVisible();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('tab', { name: 'History', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByText('No runs yet. Your team’s history will appear here.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Run test team' })).toBeVisible();
+});
+
+test('retires legacy entry screens while keeping project navigation focused', async ({ page }) => {
+  await mockApi(page);
+  for (const path of ['/studies', '/populations', '/executions', '/scenarios', '/contexts', '/runs']) {
+    await page.goto(path);
+    await expect(page).toHaveURL(/\/$/);
+  }
   const navigation = page.getByRole('navigation', { name: 'Primary' });
-  await expect(navigation.getByRole('link', { name: 'Studies', exact: true })).toBeHidden();
-  await navigation.getByText('Advanced', { exact: true }).click();
-  await navigation.getByRole('link', { name: 'Studies', exact: true }).click();
-  await expect(page).toHaveURL(/\/studies$/);
-  await expect(page.getByRole('heading', { name: 'New study', exact: true })).toBeVisible();
+  await expect(navigation.getByText('Advanced', { exact: true })).toHaveCount(0);
+  await expect(navigation.getByRole('link', { name: 'Projects', exact: true })).toBeVisible();
+});
+
+test('retains setup in memory when the dialog closes and browser storage is unavailable', async ({ page }) => {
+  const mock = await mockApi(page);
+  mock.flags.loseConnect = true;
+  await page.addInitScript(() => Object.defineProperty(window, 'sessionStorage', { get() { throw new Error('Storage unavailable'); } }));
+  await page.goto('/');
+  await fillConnection(page);
+  await page.getByRole('button', { name: 'Close setup' }).click();
+  await page.getByRole('button', { name: 'New project', exact: true }).click();
+  await expect(page.getByLabel('Project name')).toHaveValue('Room Desk');
+  await expect(page.getByLabel('Audience and intent')).toHaveValue('Front desk staff move bookings.');
+  await page.getByRole('button', { name: 'Connect project' }).click();
+  await expect(page.getByRole('button', { name: 'Check connection' })).toBeVisible();
+  await page.getByRole('button', { name: 'Close setup' }).click();
+  await page.getByRole('button', { name: 'New project', exact: true }).click();
+  await page.getByRole('button', { name: 'Check connection' }).click();
+  await expect(page).toHaveURL(/\/projects\/desk$/);
+  expect(mock.connects).toHaveLength(1);
+  expect(mock.lookups).toEqual(mock.connects);
+});
+
+test('shows one recovery action after a failed discovery refresh loses its response', async ({ page }) => {
+  const mock = await mockApi(page, makeProject('failed'));
+  mock.flags.loseRefresh = true;
+  await page.goto('/projects/desk');
+  await page.getByRole('button', { name: 'Refresh understanding' }).click();
+  await expect(page.getByRole('button', { name: 'Recover refresh request' })).toHaveCount(1);
 });

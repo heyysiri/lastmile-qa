@@ -1,6 +1,6 @@
-# Advanced compatibility workflows
+# Historical compatibility workflows
 
-These earlier Seller and Oscar workflows remain under **Advanced**. The primary development-project flow is documented in the [README](../README.md).
+These instructions describe the earlier Seller and Oscar workflows. Their collection and authoring entry screens have been retired; direct saved-detail and evidence links still work, and the underlying APIs/data remain available. The primary development-project flow is documented in the [README](../README.md).
 
 # LastMile QA
 

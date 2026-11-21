@@ -1,14 +1,15 @@
 'use client';
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { ArrowRight, Plus } from 'lucide-react';
+import { ArrowUpRight, FolderGit2, Plus } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ConnectProjectSchema, type ConnectProjectRequest } from '@lastmile/contracts/projects';
 import { api, ApiFailure, useLoad } from '../lib/api';
 import { newRequestId } from '../lib/editor';
 import { connectWasRejected, projectHref, projectRequestId } from '../lib/projects';
-import { StudioError } from './Studio';
+import { StudioError, TesterFace } from './Studio';
+import { Dialog, DialogContent, DialogTrigger } from './primitives';
 import { Pending } from './ui';
 
 const pendingKey = 'lastmile-pending-project-connection';
@@ -18,32 +19,47 @@ export function ProjectsList() {
   const projects = useLoad(api.projects);
   const health = useLoad(api.health);
   const ready = health.data?.projectDiscoveryReady === true && !health.error;
+
+
   return <div className="studio project-studio">
-    <header className="studio-heading project-page-heading">
-      <h1>Projects</h1>
-      <p>Test customer journeys on your development app.</p>
+    <header className="directory-hero">
+      <div><span className="workspace-eyebrow">A little perspective goes a long way</span>
+        <h1>Your app.<br />A fresh set of <span>eyes.</span></h1>
+        <p>Give your app a team of users. Find what breaks for them, and verify the fix.</p>
+      </div>
+      <div className="directory-illustration" aria-hidden="true">
+        <span className="orbit-label label-one">Different people.</span>
+        <div className="hero-faces"><TesterFace index={0} /><TesterFace index={1} /><TesterFace index={2} /></div>
+        <span className="orbit-label label-two">Unexpected discoveries.</span>
+      </div>
     </header>
     <StudioError error={health.error} onRetry={health.reload} />
-    <div className="project-directory">
-      <ConnectProject ready={ready} checkingHealth={health.loading} />
-      <section className={projects.data?.length ? "project-list has-projects" : "project-list"} aria-labelledby="connected-projects">
-        <h2 id="connected-projects">Connected projects</h2>
-        <StudioError error={projects.error} onRetry={projects.reload} />
-        {projects.loading && !projects.data && <Pending label="Loading projects…" />}
-        {projects.data?.length === 0 && <p className="muted">Your projects will appear here after you connect them.</p>}
-        <ul>{projects.data?.map(project => <li key={project.id}>
-          <Link href={projectHref(project.id)}>
-            <span><strong>{project.name}</strong><small>{project.appUrl}</small></span>
-            <span className="project-list-status">{project.status === 'discovering' ? 'Discovering' : project.status === 'failed' ? 'Needs attention' : 'Ready'}</span>
-            <ArrowRight size={17} aria-hidden="true" />
-          </Link>
-        </li>)}</ul>
-      </section>
-    </div>
+    <section className="project-directory" aria-labelledby="connected-projects">
+      <div className="directory-heading"><h2 id="connected-projects">Your projects <span>{projects.data?.length ?? '–'}</span></h2>
+        <ConnectProject ready={ready} checkingHealth={health.loading} />
+      </div>
+      <StudioError error={projects.error} onRetry={projects.reload} />
+      {projects.loading && !projects.data && <Pending label="Loading projects…" />}
+      {projects.data?.length === 0 && <div className="directory-empty">
+        <FolderGit2 size={30} aria-hidden="true" /><h3>Meet your first test team</h3>
+        <p>Connect a repository and its running app to get started.</p>
+      </div>}
+      <ul className="project-grid">{projects.data?.map((project, index) => <li key={project.id}>
+        <Link href={projectHref(project.id)} className="project-tile">
+          <div className="project-tile-top"><span className={`project-monogram tone-${index % 3}`} aria-hidden="true">{project.name.slice(0, 1).toUpperCase()}</span>
+            <span className="project-list-status" data-status={project.status}><i />{project.status === 'discovering' ? 'Getting to know your app' : project.status === 'failed' ? 'Needs attention' : 'Ready to test'}</span>
+          </div>
+          <h3>{project.name}</h3><p>{project.appUrl}</p>
+          <div className="project-tile-footer"><span>Open workspace</span><ArrowUpRight size={19} aria-hidden="true" /></div>
+        </Link>
+      </li>)}</ul>
+    </section>
   </div>;
 }
 
 function ConnectProject({ ready, checkingHealth }: { ready: boolean; checkingHealth: boolean }) {
+  const [open, setOpen] = useState(false);
+  const draft = useRef<Record<string, string>>({});
   const router = useRouter();
   const form = useRef<HTMLFormElement>(null);
   const lock = useRef(false);
@@ -58,6 +74,7 @@ function ConnectProject({ ready, checkingHealth }: { ready: boolean; checkingHea
     try {
       const saved = projectRequestId.safeParse(sessionStorage.getItem(pendingKey));
       if (saved.success) {
+        setOpen(true);
         setPendingId(saved.data);
         void lookup(saved.data);
       }
@@ -75,6 +92,7 @@ function ConnectProject({ ready, checkingHealth }: { ready: boolean; checkingHea
   }
 
   function connected(id: string) {
+    draft.current = {};
     form.current?.reset();
     setAccountCount(0);
     retain(undefined);
@@ -152,23 +170,27 @@ function ConnectProject({ ready, checkingHealth }: { ready: boolean; checkingHea
     }
   }
 
-  return <section className="project-connect" aria-labelledby="connect-heading">
-    <h2 id="connect-heading">Connect a project</h2>
-    <p>Start your app locally before connecting. LastMile reads the repository and uses the running app to check what it finds.</p>
-    <form ref={form} onSubmit={connect} onInvalidCapture={event => {
+  return <Dialog open={open} onOpenChange={setOpen}>
+    <DialogTrigger asChild><button type="button"><Plus size={17} aria-hidden="true" />New project</button></DialogTrigger>
+    <DialogContent title="Connect a project" description="Start your app locally. We’ll read its code and explore it with your users in mind.">
+    <div className="project-connect">
+    <form ref={form} onSubmit={connect} onChange={event => {
+      const input = event.target;
+      if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) draft.current[input.name] = input.value;
+    }} onInvalidCapture={event => {
       const disclosure = (event.target as HTMLElement).closest('details');
       if (disclosure) disclosure.open = true;
     }}>
       <fieldset className="plain-fieldset" disabled={busy}>
         <div className="studio-fields">
-          <label className="field"><span>Project name</span><input name="name" required maxLength={100} /></label>
-          <label className="field"><span>Running app URL</span><input name="appUrl" type="url" placeholder="http://localhost:8080" required /></label>
+          <label className="field"><span>Project name</span><input name="name" defaultValue={draft.current.name ?? ''} required maxLength={100} /></label>
+          <label className="field"><span>Running app URL</span><input name="appUrl" defaultValue={draft.current.appUrl ?? ''} type="url" placeholder="http://localhost:8080" required /></label>
         </div>
-        <label className="field"><span>Repository path</span><input name="repositoryPath" placeholder="/path/to/your/repository" required maxLength={2000} /></label>
-        <label className="field"><span>Audience and intent</span><textarea name="brief" className="short compact" rows={2} placeholder="Who uses the app, and what do they need to do?" required maxLength={3000} /></label>
+        <label className="field"><span>Repository path</span><input name="repositoryPath" defaultValue={draft.current.repositoryPath ?? ''} placeholder="/path/to/your/repository" required maxLength={2000} /></label>
+        <label className="field"><span>Audience and intent</span><textarea name="brief" defaultValue={draft.current.brief ?? ''} className="short compact" rows={2} placeholder="Who uses the app, and what do they need to do?" required maxLength={3000} /></label>
         <details className="project-disclosure">
           <summary>Add requirements</summary>
-          <label className="field"><span className="sr-only">Requirements</span><textarea name="requirements" className="short compact" maxLength={12000} /></label>
+          <label className="field"><span className="sr-only">Requirements</span><textarea name="requirements" defaultValue={draft.current.requirements ?? ''} className="short compact" maxLength={12000} /></label>
         </details>
         <details className="project-disclosure">
           <summary>Advanced connection setup</summary>
@@ -177,26 +199,26 @@ function ConnectProject({ ready, checkingHealth }: { ready: boolean; checkingHea
             <p className="field-hint">Add up to three existing accounts. Each account can be assigned to one tester.</p>
             {Array.from({ length: accountCount }, (_, index) => <fieldset className="plain-fieldset project-account" key={index}>
               <legend>Account {index + 1}</legend>
-              <label className="field"><span>Role or label</span><input name={`label-${index}`} autoComplete="off" required maxLength={100} /></label>
+              <label className="field"><span>Role or label</span><input name={`label-${index}`} defaultValue={draft.current[`label-${index}`] ?? ''} autoComplete="off" required maxLength={100} /></label>
               <div className="studio-fields">
-                <label className="field"><span>Username</span><input name={`username-${index}`} autoComplete="off" required maxLength={300} /></label>
-                <label className="field"><span>Password</span><input name={`password-${index}`} type="password" autoComplete="off" required maxLength={1000} /></label>
+                <label className="field"><span>Username</span><input name={`username-${index}`} defaultValue={draft.current[`username-${index}`] ?? ''} autoComplete="off" required maxLength={300} /></label>
+                <label className="field"><span>Password</span><input name={`password-${index}`} defaultValue={draft.current[`password-${index}`] ?? ''} type="password" autoComplete="off" required maxLength={1000} /></label>
               </div>
             </fieldset>)}
             <div className="row">
               {accountCount < 3 && <button type="button" className="text-button" onClick={() => setAccountCount(count => count + 1)}>Add development account</button>}
-              {accountCount > 0 && <button type="button" className="text-button" onClick={() => setAccountCount(count => count - 1)}>Remove last account</button>}
+              {accountCount > 0 && <button type="button" className="text-button" onClick={() => { for (const field of ['label', 'username', 'password']) delete draft.current[`${field}-${accountCount - 1}`]; setAccountCount(count => count - 1); }}>Remove last account</button>}
             </div>
-            <label className="field"><span>Additional allowed origins</span><textarea name="allowedOrigins" className="short compact" placeholder="One HTTP origin per line" /></label>
+            <label className="field"><span>Additional allowed origins</span><textarea name="allowedOrigins" defaultValue={draft.current.allowedOrigins ?? ''} className="short compact" placeholder="One HTTP origin per line" /></label>
             <h3>Private repair verification</h3>
             <p className="field-hint">These commands run in a private checkout when you verify a fix. Enter the executable on the first line and each argument on its own line.</p>
             <div className="studio-fields">
-              <label className="field"><span>Start command</span><textarea name="start" className="short compact" /></label>
-              <label className="field"><span>Build command (optional)</span><textarea name="build" className="short compact" /></label>
-              <label className="field"><span>Working directory (optional)</span><input name="cwd" placeholder="Repository-relative path" /></label>
-              <label className="field"><span>Database path (optional)</span><input name="databasePath" placeholder="Repository-relative path" /></label>
+              <label className="field"><span>Start command</span><textarea name="start" defaultValue={draft.current.start ?? ''} className="short compact" /></label>
+              <label className="field"><span>Build command (optional)</span><textarea name="build" defaultValue={draft.current.build ?? ''} className="short compact" /></label>
+              <label className="field"><span>Working directory (optional)</span><input name="cwd" defaultValue={draft.current.cwd ?? ''} placeholder="Repository-relative path" /></label>
+              <label className="field"><span>Database path (optional)</span><input name="databasePath" defaultValue={draft.current.databasePath ?? ''} placeholder="Repository-relative path" /></label>
             </div>
-            <label className="field"><span>Private runtime files (optional)</span><textarea name="runtimeFiles" className="short compact" placeholder="One repository-relative path per line" /></label>
+            <label className="field"><span>Private runtime files (optional)</span><textarea name="runtimeFiles" defaultValue={draft.current.runtimeFiles ?? ''} className="short compact" placeholder="One repository-relative path per line" /></label>
             <p className="field-hint">Files your app needs to start, such as local session configuration. Copied only into the private verification app, never sent to the coding model.</p>
           </div>
         </details>
@@ -213,5 +235,7 @@ function ConnectProject({ ready, checkingHealth }: { ready: boolean; checkingHea
           </button>}
       </div>
     </form>
-  </section>;
+    </div>
+    </DialogContent>
+  </Dialog>;
 }

@@ -1,2 +1,3 @@
-import { RunsList } from '../../components/RunsList';
-export default function Page() { return <RunsList />; }
+import { redirect } from 'next/navigation';
+
+export default function Page() { redirect('/'); }

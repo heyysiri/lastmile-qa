@@ -1,2 +1,3 @@
-import { StudyComposer } from '../../components/StudyComposer';
-export default function Page() { return <StudyComposer />; }
+import { redirect } from 'next/navigation';
+
+export default function Page() { redirect('/'); }

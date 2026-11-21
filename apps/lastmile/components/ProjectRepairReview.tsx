@@ -111,7 +111,7 @@ export function ProjectRepairReview({ id }: { id: string }) {
       <header className="studio-heading project-page-heading">
         <h1>Review fix</h1><p>{job.project.name}</p>
       </header>
-      <div className="project-progress" role="status">
+      <div className="project-progress repair-status" data-outcome={job.verification?.outcome} role="status">
         {active ? <Pending label={repairStatus(job)} /> : <strong>{repairStatus(job)}</strong>}
       </div>
       <StudioError error={job.error} />
@@ -146,13 +146,15 @@ export function ProjectRepairReview({ id }: { id: string }) {
         {notice && <p className="note warn" role="alert">{notice}</p>}
         <StudioError error={write.error} />
       </section>}
-      <RunFindings project={job.project} run={job.sourceRun} title="Original run evidence" />
+      <details className="project-disclosure original-evidence"><summary>Original run evidence</summary>
+        <RunFindings project={job.project} run={job.sourceRun} title="Original findings" />
+      </details>
     </>}
   </div>;
 }
 
 function PatchChanges({ changes }: { changes: PatchProposal['changes'] }) {
-  return <div className="repair-files">{changes.map(change => <details className="project-disclosure" key={change.path}>
+  return <div className="repair-files">{changes.map(change => <details className="project-disclosure" open={changes.length === 1} key={change.path}>
     <summary><code>{change.path}</code></summary>
     <PatchDiff change={change} />
     <details className="project-disclosure">

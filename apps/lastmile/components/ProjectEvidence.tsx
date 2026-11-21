@@ -62,6 +62,14 @@ export function RunFindings({ run, project, title = 'Latest findings', actions, 
     ?? team.find(tester => tester.id === testerId);
 
   return <section className="project-report" aria-label={title}>
+    <div className="run-overview" aria-label="Journey outcomes">
+      <div><span className="outcome-dot failed" /><strong>{run.metrics.failed}</strong><span>Failed</span></div>
+      <div><span className="outcome-dot passed" /><strong>{run.metrics.passed}</strong><span>Passed</span></div>
+      <div><span className="outcome-dot unclear" /><strong>{run.metrics.inconclusive}</strong><span>Inconclusive</span></div>
+      <div className="run-duration"><strong>{duration(run.metrics.elapsedMs)}</strong><span>Run time</span></div>
+    </div>
+    <div className={run.results.length ? 'project-report-grid' : undefined}>
+    <div className="project-finding-column">
     <div className="project-section-heading"><h2>{title}</h2>{detailLink}</div>
     {run.status === 'interrupted' && <p className="note warn" role="status">The test team stopped before finishing. Review the evidence it recorded.</p>}
     {run.error && <p className="note warn">{run.error}</p>}
@@ -74,19 +82,23 @@ export function RunFindings({ run, project, title = 'Latest findings', actions, 
         </div>
         {tester && <p className="project-finding-role">{tester.name} · {tester.role}</p>}
         <p>{finding.description}</p>
-        {finding.impact && <p><strong>{finding.impact}</strong></p>}
-        <SourceCitations sources={finding.sources} />
+        <details className="project-disclosure finding-context"><summary>Why it matters & evidence</summary>
+          {finding.impact && <p>{finding.impact}</p>}
+          <SourceCitations sources={finding.sources} />
+        </details>
       </article>;
     })}
-    {run.summary && <p className="project-summary">{run.summary}</p>}
+    {run.summary && <details className="project-disclosure"><summary>Run summary</summary><p className="project-summary">{run.summary}</p></details>}
     {!run.findings.length && !run.summary && !run.error && run.status === 'completed' && <p className="project-summary">
       {run.metrics.failed ? 'The team recorded failed checks.' : run.metrics.inconclusive ? 'Some checks were inconclusive.' : run.metrics.passed ? 'The recorded checks passed.' : 'The team finished without recording any checks.'}
     </p>}
     {actions && <div className="project-report-action">{actions}</div>}
+    </div>
     {run.results.length > 0 && <div className="project-results">
       <h3>Tester results</h3>
       <TesterResults results={run.results} accounts={project.accounts} />
     </div>}
+    </div>
     <MeasuredResults run={run} />
   </section>;
 }
