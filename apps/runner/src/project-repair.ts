@@ -481,6 +481,8 @@ export function createProjectRepairRuntime(options: Options): ProjectRepairRunti
             actions: run.steps.slice(-12).map(({ action, observation }) => ({ action, observation })),
           })),
           editable: policy.editable,
+          // Cited excerpts can miss the faulty code, and the proposer cannot retrieve more.
+          sources: await Promise.all(policy.editable.map(async path => ({ path, content: await readSourceText(tree, path) }))),
           citations: [...new Map(policy.refs.map(ref => [`${ref.path}:${ref.startLine}:${ref.endLine}`, ref])).values()]
             .map(({ path, startLine, endLine, excerpt }) => ({ path, startLine, endLine, excerpt })),
         };

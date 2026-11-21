@@ -316,3 +316,50 @@ it.each([
   expect((await f.runtime.prepare(f.job, secrets)).error).toBeTruthy();
   expect(f.propose).toHaveBeenCalledTimes(1);
 });
+
+// Rewrites the editable file so its cited excerpt is only line 2, keeping manifest, version and citations consistent.
+async function citeSecondLine(f: Awaited<ReturnType<typeof fixture>>, lines: string[]) {
+  const content = lines.join('\n');
+  await writeFile(join(f.repositoryPath, entry), content);
+  const manifestPath = join(f.snapshot, 'source-manifest.json');
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  manifest.files.find((file: { path: string }) => file.path === entry).hash = hashBytes(content);
+  manifest.version = hashValue(manifest.files);
+  await writeFile(manifestPath, JSON.stringify(manifest));
+  f.job.sourceRun.sourceVersion = manifest.version;
+  for (const result of f.job.sourceRun.results) {
+    for (const source of [...result.checks[0].sources, ...result.journey.checks[0].sources, ...result.journey.sources]) {
+      if (source.path === entry) Object.assign(source, { startLine: 2, endLine: 2, hash: hashBytes(content), excerpt: lines[1] });
+    }
+  }
+  return content;
+}
+
+it('gives the proposer the complete editable source, including a fault outside the cited excerpt, without touching the original', async () => {
+  const f = await fixture();
+  const lines = ["const save = () => 'FAULT_OUTSIDE_CITED_EXCERPT';", code, 'exports.tail = save;'];
+  const content = await citeSecondLine(f, lines);
+  expect((await f.runtime.prepare(f.job, secrets)).error).toBeUndefined();
+  const input = f.propose.mock.calls[0][0] as { sources: { path: string; content: string }[]; citations: { excerpt: string }[] };
+  expect(input.citations.find((citation: { excerpt: string }) => citation.excerpt === code)).toBeTruthy();
+  expect(input.sources).toEqual([{ path: entry, content }]);
+  expect(await readFile(join(f.repositoryPath, entry), 'utf8')).toBe(content);
+  expect(await readdir(f.workspaceRoot)).toEqual(['repair']);
+});
+
+it('redacts private values in complete editable source before the coding request', async () => {
+  const f = await fixture();
+  await citeSecondLine(f, ["const owner = 'private-password';", code, 'exports.tail = owner;']);
+  expect((await f.runtime.prepare(f.job, secrets)).error).toBeUndefined();
+  const text = JSON.stringify(f.propose.mock.calls[0][0]);
+  expect(text).not.toContain('private-password');
+  expect(text).toContain("const owner = '[private]';");
+});
+
+it('fails before the provider when complete editable source exceeds the coding input limit', async () => {
+  const f = await fixture();
+  await citeSecondLine(f, ['// ' + 'x'.repeat(181_000), code]);
+  expect((await f.runtime.prepare(f.job, secrets)).error).toMatch(/exceeds the coding input limit/);
+  expect(f.propose).not.toHaveBeenCalled();
+  expect(await readdir(f.workspaceRoot)).toEqual([]);
+});
