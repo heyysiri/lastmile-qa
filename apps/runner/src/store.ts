@@ -9,6 +9,7 @@ import { desktopContext, inventoryScenario, mobileContext, storeScenario } from 
 import { createStudyStore } from './study-store';
 import { createPopulationStore } from './population-store';
 import { createEvolutionStore } from './evolution-store';
+import {createProjectStore} from './project-store';
 
 export class RunnerError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) {
@@ -128,6 +129,7 @@ export function openRunStore(path: string) {
   const studies = createStudyStore(db, runAccess);
   const populationStore = createPopulationStore(db, runAccess, studies.requireStudy);
   const evolution = createEvolutionStore(db, { getExecutionDetail: populationStore.getExecutionDetail });
+  const projects = createProjectStore(db);
   const populations = {
     ...populationStore,
     prepareLaunch(...args: Parameters<typeof populationStore.prepareLaunch>) {
@@ -165,6 +167,7 @@ export function openRunStore(path: string) {
     studies.recoverInterrupted();
     populations.recoverInterrupted();
     evolution.recoverInterrupted();
+    projects.recoverInterrupted();
     for(const record of listInvestigations()) if(record.status==='running') saveInvestigation({...record,status:'interrupted',error:'Runner restarted during investigation'});
     for (const row of findRunning.all()) {
       const run = decode<RunRecord>(row);
@@ -182,6 +185,7 @@ export function openRunStore(path: string) {
     studies,
     populations,
     evolution,
+    projects,
     getInvestigation:(id:string)=>{const row=findInvestigation.get(id);return row?decode<InvestigationRecord>(row):undefined;},
     listInvestigations,
     enqueueInvestigation:db.transaction((request:InvestigationRequest)=>{

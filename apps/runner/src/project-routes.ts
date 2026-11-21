@@ -1,0 +1,17 @@
+import {realpath,stat} from 'node:fs/promises';import {resolve,parse as parsePath} from 'node:path';import type {FastifyInstance} from 'fastify';import {z,type ZodType} from 'zod';
+import {ConnectProjectSchema,ProjectRepairRequestSchema,ProjectRunRequestSchema} from '@lastmile/contracts/projects';import {VerifyRepairRequestSchema} from '@lastmile/contracts/evolution';import {RunnerError} from './store';import type {createProjectStore} from './project-store';
+const refreshSchema=z.object({requestId:z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/)}).strict();
+const parse=<T>(schema:ZodType<T>,value:unknown)=>{const r=schema.safeParse(value);if(!r.success)throw new RunnerError(400,'validation','Project request has invalid inputs');return r.data;};
+export function registerProjectRoutes(app:FastifyInstance,store:ReturnType<typeof createProjectStore>,options:{startWorker:()=>void;repairsReady:boolean}){
+ app.get('/api/projects',async()=>store.list());
+ app.post('/api/projects',async(request,reply)=>{const body=parse(ConnectProjectSchema,request.body);body.repositoryPath=resolve(body.repositoryPath);if(!store.byRequest(body.requestId)){try{const path=await realpath(body.repositoryPath);if(path===parsePath(path).root||!(await stat(path)).isDirectory())throw new Error();}catch{throw new RunnerError(400,'repository_unavailable','Choose an existing development repository directory');}}const result=store.connect(body);options.startWorker();return reply.code(202).send(result);});
+ app.get<{Params:{requestId:string}}>('/api/projects/by-request/:requestId',async request=>{const p=store.byRequest(request.params.requestId);if(!p)throw new RunnerError(404,'not_found','Connection request was not accepted');return p;});
+ app.get<{Params:{id:string}}>('/api/projects/:id',async request=>store.detail(request.params.id));
+ app.post<{Params:{id:string}}>('/api/projects/:id/refresh',async(request,reply)=>{const {requestId}=parse(refreshSchema,request.body);const p=store.refresh(request.params.id,requestId);options.startWorker();return reply.code(202).send(p);});
+ app.post<{Params:{id:string}}>('/api/projects/:id/runs',async(request,reply)=>{const r=store.enqueueRun(request.params.id,parse(ProjectRunRequestSchema,request.body));options.startWorker();return reply.code(202).send(r);});
+ app.get<{Params:{id:string}}>('/api/project-runs/:id',async request=>{const r=store.getRun(request.params.id);if(!r)throw new RunnerError(404,'not_found','Test run does not exist');return r;});
+ app.get<{Querystring:{projectId?:string}}>('/api/project-repairs',async request=>store.repairs(request.query.projectId));
+ app.post('/api/project-repairs',async(request,reply)=>{if(!options.repairsReady)throw new RunnerError(409,'repair_unavailable','Private repair execution is not configured');const r=store.enqueueRepair(parse(ProjectRepairRequestSchema,request.body));options.startWorker();return reply.code(202).send(r);});
+ app.get<{Params:{id:string}}>('/api/project-repairs/:id',async request=>{const r=store.getRepair(request.params.id);if(!r)throw new RunnerError(404,'not_found','Repair does not exist');return r;});
+ app.post<{Params:{id:string}}>('/api/project-repairs/:id/verify',async(request,reply)=>{if(!options.repairsReady)throw new RunnerError(409,'repair_unavailable','Private repair execution is not configured');const r=store.verifyRepair(request.params.id,parse(VerifyRepairRequestSchema,request.body));options.startWorker();return reply.code(202).send(r);});
+}

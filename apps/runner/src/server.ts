@@ -19,8 +19,11 @@ import { openRunStore, RunnerError } from './store';
 import { registerStudyRoutes } from './study-routes';
 import { registerPopulationRoutes } from './population-routes';
 import { registerEvolutionRoutes } from './evolution-routes';
+import {registerProjectRoutes} from './project-routes';
+import type {ProjectRuntime} from '@lastmile/contracts/projects';
 
 export type ServerOptions = {
+  projectRuntime?: ProjectRuntime;
   databasePath: string;
   apiToken?: string;
   artifactRoot?: string;
@@ -140,6 +143,7 @@ export function createServer(options: ServerOptions) {
     () => { const job = store.claimInvestigation(); return job && { kind: 'investigation' as const, job }; },
     () => { const batch = store.populations.claimNext(); return batch && { kind: 'population' as const, batch }; },
     () => { const job = store.evolution.claimNext(); return job && { kind: 'evolution' as const, job }; },
+    () => { const job = store.projects.claimNext(); return job && { kind: 'project' as const, job }; },
   ];
   let nextQueue = 0;
 
@@ -159,6 +163,7 @@ export function createServer(options: ServerOptions) {
       while (!stopping) {
         const work = claimWork();
         if (!work) break;
+        if(work.kind==='project'){await store.projects.execute(work.job,options.projectRuntime);continue;}
         if (work.kind === 'study') {
           const { execution, origin, runs } = work.study;
           if (origin === sellerDemoUrl.origin) {
@@ -256,8 +261,10 @@ export function createServer(options: ServerOptions) {
   const repairsReady = Boolean(options.repairRuntime);
   app.get('/api/health', async () => ({
     status: 'ok', modelConfigured, executionReady: execute !== executeRun, suggestionsReady, repairsReady,
+    projectDiscoveryReady:Boolean(options.projectRuntime),projectExecutionReady:Boolean(options.projectRuntime),projectRepairsReady:Boolean(options.projectRuntime?.repair),
   }));
   app.get('/api/capabilities', async () => capabilities);
+  registerProjectRoutes(app,store.projects,{startWorker,repairsReady:Boolean(options.projectRuntime?.repair)});
   registerStudyRoutes(app, store.studies, {
     applications: options.applications ?? [],
     generateStudy: options.generateStudy,
@@ -317,7 +324,7 @@ export function createServer(options: ServerOptions) {
   });
 
   function requireRun(id: string) {
-    const run = store.getRun(id) ?? store.evolution.listRepairs().flatMap(job => [...(job.reproduction ?? []), ...(job.verification?.trials ?? [])]).find(trial => trial.run.id === id)?.run;
+    const run = store.getRun(id) ?? store.projects.findEvidence(id) ?? store.evolution.listRepairs().flatMap(job => [...(job.reproduction ?? []), ...(job.verification?.trials ?? [])]).find(trial => trial.run.id === id)?.run;
     if (!run) throw new RunnerError(404, 'not_found', 'Run does not exist');
     return run;
   }

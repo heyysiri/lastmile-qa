@@ -7,7 +7,7 @@ const text=z.string().trim().min(1).max(3000);
 const relativePath=z.string().min(1).max(1000).refine(p=>!p.startsWith('/')&&!p.includes('\\')&&!p.split('/').some(s=>s==='..'||s==='.'||!s),'Use a repository-relative path');
 const appUrl=z.string().url().refine(value=>{const u=new URL(value);return ['http:','https:'].includes(u.protocol)&&!u.username&&!u.password;},'Use an HTTP application URL without credentials');
 const scalar=z.union([z.string().max(4000),z.number().finite(),z.boolean()]);
-export const ProjectCommandsSchema=z.object({build:z.array(z.string().min(1).max(1000)).min(1).max(30).optional(),start:z.array(z.string().min(1).max(1000)).min(1).max(30),cwd:relativePath.optional(),databasePath:relativePath.optional()}).strict();
+export const ProjectCommandsSchema=z.object({build:z.array(z.string().min(1).max(1000)).min(1).max(30).optional(),start:z.array(z.string().min(1).max(1000)).min(1).max(30),cwd:relativePath.optional(),databasePath:relativePath.optional(),runtimeFiles:z.array(relativePath).max(10).optional()}).strict();
 export const ConnectProjectSchema=z.object({requestId:id,name:z.string().trim().min(1).max(100),repositoryPath:z.string().min(1).max(2000),appUrl,allowedOrigins:z.array(appUrl).max(5).default([]),brief:text,requirements:z.string().max(12000).default(''),accounts:z.array(z.object({label:z.string().trim().min(1).max(100),username:z.string().min(1).max(300),password:z.string().min(1).max(1000)}).strict()).max(3).default([]),commands:ProjectCommandsSchema.optional()}).strict();
 export type ConnectProjectRequest=z.infer<typeof ConnectProjectSchema>;
 export type ProjectCommands=z.infer<typeof ProjectCommandsSchema>;
