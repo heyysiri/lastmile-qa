@@ -52,6 +52,7 @@ const systemPrompt = [
   'Each feature and journey cites repository evidence. Every check cites the evidence for its chosen basis: requirement (including $brief or $requirements), test, or implementation. Treat implementation-only expectations as hypotheses.',
   'Every sources array contains only returned citation IDs such as S1. Never reconstruct citation objects, hashes or excerpts. A check basis is requirement, test, or implementation, never a citation ID.',
   'Use visible, field, or text checks with exact observed role/name, label, text or source-backed test ID locators. Specify a readback route for after_reload and preserve. Use preserve for evidence of values that must remain unchanged.',
+  'Journeys run in the submitted order and can share application data across browser profiles and accounts. Preservation compares against the value frozen before any journey runs. Choose untouched controls and leave preserve.expected unset unless a requirement specifies a fixed value.',
   'For a release revisit earlier checks and explain coverage of changed files. Explain gaps when a role, route, control, or expectation cannot be corroborated.',
   'Use the available turns for a small executable plan. Once each tester has one viable task and a grounded check, call submit_plan and reserve turns for corrections. Explain remaining coverage as gaps.',
   'You have at most 18 model turns. Submit an initial plan within twelve turns, using the remaining turns to correct validation failures or gather missing evidence. Prefer a small executable plan with explicit gaps over exhaustive exploration. Group up to four useful routes in one observation call.',
@@ -375,6 +376,7 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
       let unobservedRoutes = false;
       let unobservedLocators = false;
       let hypotheses = false;
+      const priorOutputs = new Map<string, string>();
       for (const journey of draft.journeys) {
         const accountId = draft.testers.find(tester => tester.id === journey.testerId)?.accountId;
         const observed = (path: string) => observations.filter(item => item.path === path && item.accountId === accountId);
@@ -404,6 +406,24 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
             throw new Error(`Check ${check.id}: locator ${JSON.stringify(check.locator)} on ${check.path ?? journey.entryPath} requires a source citation or matching browser observation for the assigned tester.`);
           }
           unobservedLocators ||= !corroborated;
+        }
+        if (!accounts.length) {
+          const inputs = new Set(Object.values(journey.inputs).map(String));
+          const outputs = new Map<string, string>();
+          for (const { phase, kind, path, locator, expected } of journey.checks) {
+            if (phase === 'after_action' || kind === 'visible' || path === undefined) continue;
+            const target = hashValue({ path, kind, locator });
+            const value = expected === undefined ? undefined : String(expected);
+            if (phase === 'preserve') {
+              const prior = priorOutputs.get(target);
+              if (prior !== undefined && prior !== value) {
+                throw new Error('Guest journeys share a check target that an earlier journey plans to write. Preserve an untouched field or choose journeys with disjoint writes.');
+              }
+            } else if (value !== undefined && inputs.has(value)) {
+              outputs.set(target, value);
+            }
+          }
+          for (const [target, value] of outputs) priorOutputs.set(target, value);
         }
       }
       if (unobservedRoutes) gaps.push('Some routes are source-backed proposals without a browser observation for the assigned tester.');

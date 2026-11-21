@@ -172,6 +172,47 @@ async function setup(route: string, label: string, change?: PlanChange, entryTex
 }
 
 describe('repository brain', () => {
+  it.each([
+    { scenario: 'a conflicting guest check', control: 'Station name', expected: 'East station', accounts: false, rejects: true },
+    { scenario: 'an uncaptured conflicting guest check', control: 'Station name', expected: undefined, accounts: false, rejects: true },
+    { scenario: 'a guest check on an untouched field', control: 'Calibration', expected: '10', accounts: false, rejects: false },
+    { scenario: 'the same control under distinct accounts', control: 'Station name', expected: 'East station', accounts: true, rejects: false },
+  ])('handles $scenario when a prior journey plans a write', async ({ control, expected, accounts, rejects }) => {
+    const path = '/station';
+    await writeFile(join(fixture, 'station.py'), 'route = "/station"\nname = "Station name"\ncalibration = "Calibration"\nthreshold = "Alarm threshold"\n');
+    project.accounts = accounts ? [{ id: 'editor', label: 'Editor' }, { id: 'operator', label: 'Operator' }] : [];
+    const testers = ['editor', 'operator'].map(id => ({
+      id, name: id, role: 'Staff', summary: 'Maintains station settings.', ...(accounts ? { accountId: id } : {}),
+    }));
+    let turn = 0;
+    const complete = async (request: unknown) => {
+      if (++turn === 1) return call(turn, 'search_source', { query: 'Station name' });
+      if (turn > 2) return completion();
+      const { messages } = request as { messages: { content: string }[] };
+      const [{ citation }] = JSON.parse(messages.at(-1)!.content) as { citation: string }[];
+      const sources = [citation];
+      const field = (id: string, label: string, value: string, phase: string, expected?: string) => ({
+        id, label, kind: 'field', locator: { by: 'label', value }, phase, path, expected, basis: 'implementation', sources,
+      });
+      const journeys = [
+        { id: 'rename', testerId: 'editor', title: 'Rename the station', goal: 'Save a new station name.', entryPath: path,
+          inputs: { name: 'East Annex' }, checks: [field('saved-name', 'Saved station name', 'Station name', 'after_reload', 'East Annex')],
+          reason: 'Staff can update station names.', sources },
+        { id: 'adjust', testerId: 'operator', title: 'Adjust the alarm', goal: 'Save a new alarm threshold.', entryPath: path,
+          inputs: { threshold: '6' }, checks: [field('saved-threshold', 'Saved threshold', 'Alarm threshold', 'after_reload', '6'),
+            field('preserved', 'Preserved setting', control, 'preserve', expected)], reason: 'Staff can adjust alarm thresholds.', sources },
+      ];
+      return call(turn, 'submit_plan', { plan: { summary: 'Station settings', roles: ['Staff'], testers, journeys, gaps: [],
+        features: [{ id: 'settings', title: 'Station settings', description: 'Update station settings.', sources }] } });
+    };
+    const result = createRepositoryBrain({ model: 'test', complete })(project, { accounts: [] }, () => {});
+    if (rejects) {
+      await expect(result).rejects.toThrow(/journeys share.*preserve an untouched field/i);
+    } else {
+      expect((await result).plan.journeys[1].checks[1]).toMatchObject({ phase: 'preserve', expected });
+    }
+  });
+
   it('grounds the first model turn in the configured entry and startup files', async () => {
     project.appUrl += '/workspace/';
     project.commands = { cwd: 'runtime', start: ['python', 'server.py'] };
