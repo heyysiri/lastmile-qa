@@ -24,7 +24,7 @@ type BrainOptions = {
   complete?: (input: unknown) => Promise<unknown>;
 };
 
-const modelLimit = 12;
+const modelLimit = 18;
 const discoveryMs = 120_000;
 const routeLimit = 12;
 const sourceToolLimit = 20;
@@ -54,7 +54,7 @@ const systemPrompt = [
   'Use visible, field, or text checks with exact observed role/name, label, text or source-backed test ID locators. Specify a readback route for after_reload and preserve. Use preserve for evidence of values that must remain unchanged.',
   'For a release revisit earlier checks and explain coverage of changed files. Explain gaps when a role, route, control, or expectation cannot be corroborated.',
   'Use the available turns for a small executable plan. Once each tester has one viable task and a grounded check, call submit_plan and reserve turns for corrections. Explain remaining coverage as gaps.',
-  'You have at most 12 model turns. Use the first nine for focused evidence gathering and reserve the final three for submit_plan and corrections. Prefer a small executable plan with explicit gaps over exhaustive exploration. Group up to four useful routes in one observation call.',
+  'You have at most 18 model turns. Submit an initial plan within twelve turns, using the remaining turns to correct validation failures or gather missing evidence. Prefer a small executable plan with explicit gaps over exhaustive exploration. Group up to four useful routes in one observation call.',
 ].join('\n');
 
 const digestSchema = z.array(z.strictObject({ path: z.string(), hash: z.string().regex(/^[a-f0-9]{64}$/) })).max(20_000);
@@ -364,8 +364,9 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
       const kinds = new Map(index.files.map(({ path, kind }) => [path, kind]));
       validateActorContent(draft, allReferences, kinds);
       const repositoryBacked = (refs: SourceReference[]) => refs.some(ref => kinds.has(ref.path));
-      if (draft.features.some(feature => !repositoryBacked(feature.sources))) {
-        throw new Error('Each feature requires a repository citation. Cite a startupSources ID or read/search a repository file; $brief and $requirements alone do not establish an implemented feature.');
+      const unsupportedFeature = draft.features.find(feature => !repositoryBacked(feature.sources));
+      if (unsupportedFeature) {
+        throw new Error(`Feature ${unsupportedFeature.id} requires a repository citation. Cite a startupSources ID or read/search a repository file; $brief and $requirements alone do not establish an implemented feature.`);
       }
       const gaps: string[] = [];
       if (!accounts.length) gaps.push('Testers are separate browser personas. No development accounts were supplied.');
@@ -380,7 +381,7 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
         const route = (path: string, sources: SourceReference[]) => {
           if (!routeSchema.safeParse(path).success || (!observed(path).length &&
               !sources.some(ref => kinds.has(ref.path) && routeIn(path, ref.excerpt)))) {
-            throw new Error('Journey or readback route requires a source citation or a matching browser observation');
+            throw new Error(`Journey ${journey.id}: route ${path} requires a source citation or a matching browser observation for the assigned tester. Use observe_app to corroborate this route.`);
           }
           unobservedRoutes ||= !observed(path).length;
         };
@@ -400,7 +401,7 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
           if (check.path) route(check.path, sources);
           const corroborated = observed(check.path ?? journey.entryPath).some(item => observedLocator(check, item.text));
           if (!corroborated && !sources.some(ref => kinds.has(ref.path) && sourcedLocator(check, ref.excerpt))) {
-            throw new Error('Check locator requires a source citation or matching browser observation');
+            throw new Error(`Check ${check.id}: locator ${JSON.stringify(check.locator)} on ${check.path ?? journey.entryPath} requires a source citation or matching browser observation for the assigned tester.`);
           }
           unobservedLocators ||= !corroborated;
         }
@@ -426,11 +427,9 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
       override async *stream(messages: Parameters<OpenAIModel['stream']>[0], settings?: StreamOptions) {
         const cancelSignal = AbortSignal.any([signal, AbortSignal.timeout(45_000), ...(settings?.cancelSignal ? [settings.cancelSignal] : [])]);
         try {
-          const toolSpecs = modelCalls >= modelLimit - 2
-            ? settings?.toolSpecs?.filter(spec => spec.name === 'submit_plan') : settings?.toolSpecs;
           // A named forced function can return finish_reason="stop" in Chat Completions,
           // which Strands treats as a final answer instead of executing the tool.
-          yield* super.stream(messages, { ...settings, toolSpecs, toolChoice: { any: {} }, cancelSignal });
+          yield* super.stream(messages, { ...settings, toolChoice: { any: {} }, cancelSignal });
         } catch {
           throw new ModelError('Repository discovery provider failed');
         }

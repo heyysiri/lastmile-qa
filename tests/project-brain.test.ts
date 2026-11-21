@@ -68,10 +68,17 @@ it('lets the guarded browser corroborate an ordinary inferred route before sourc
  expect(observe.mock.calls.some(([, ,paths])=>paths.includes('/workspace/inventory?view=stock'))).toBe(true);
 });
 
-it('reserves the last three model turns for submitting and correcting the plan',async()=>{
- await writeFile(join(fixture,'app.py'),'def readings(): return "Readings"');let turn=0;
- const complete=async(request:unknown)=>{const body=request as {tools:{function:{name:string}}[];tool_choice?:unknown};turn++;expect(body.tool_choice).toBe('required');if(turn>=10){expect(body.tools.map(t=>t.function.name)).toEqual(['submit_plan']);expect(body.tool_choice).toBe('required');}return call(turn,'search_source',{query:'readings'});};
- await expect(createRepositoryBrain({model:'test',complete})(project,secrets,()=>{})).rejects.toThrow(/turn limit/);
+it('keeps evidence tools available for late validation corrections within the bounded budget', async () => {
+  await writeFile(join(fixture, 'app.py'), 'def readings(): return "Readings"');
+  let turn = 0;
+  const complete = async (request: unknown) => {
+    const body = request as { tools: { function: { name: string } }[]; tool_choice?: unknown };
+    expect(body.tool_choice).toBe('required');
+    if (++turn >= 10) expect(body.tools.map(tool => tool.function.name)).toContain('observe_app');
+    return call(turn, 'search_source', { query: 'readings' });
+  };
+  await expect(createRepositoryBrain({ model: 'test', complete })(project, secrets, () => {})).rejects.toThrow(/turn limit/);
+  expect(turn).toBe(18);
 });
 
 it('returns malformed plan errors to the model without corrupting the provider conversation',async()=>{
@@ -264,7 +271,7 @@ describe('repository brain', () => {
 
   it.each([
     ['unknown-citation', /citation/i],
-    ['account', /account/i], ['reuse', /account/i], ['route', /route/i], ['selector', /locator/i],
+    ['account', /account/i], ['reuse', /account/i], ['route', /record.*route.*\/invented/i], ['selector', /saved.*locator.*Unseen control/i],
     ['basis', /basis/i], ['multiple', /one journey/i], ['role', /locator/i],
     ['source-goal', /actor.*source/i], ['source-persona', /actor.*source/i], ['source-input', /actor.*source/i],
     ['oracle-goal', /actor.*oracle/i], ['oracle-input', /actor.*oracle/i],
@@ -352,12 +359,12 @@ describe('repository brain', () => {
     expect(JSON.stringify(onProgress.mock.calls)).not.toContain(password);
   });
 
-  it('stops a provider that keeps requesting source at twelve turns', async () => {
+  it('stops a provider that keeps requesting source at eighteen turns', async () => {
     await writeFile(join(fixture, 'app.py'), 'def readings(): return "Readings"');
     let turn = 0;
     const complete = vi.fn(async () => call(++turn, 'search_source', { query: 'nothing' }));
     const discover = createRepositoryBrain({ model: 'mock-brain', complete });
     await expect(discover(project, secrets, () => {})).rejects.toThrow(/turn limit/i);
-    expect(complete).toHaveBeenCalledTimes(12);
+    expect(complete).toHaveBeenCalledTimes(18);
   });
 });
