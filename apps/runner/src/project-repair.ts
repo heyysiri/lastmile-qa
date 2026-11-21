@@ -134,7 +134,7 @@ async function checkCitations(tree: string, source: ProjectRun, manifest: Manife
   ];
   const editable: string[] = [];
   for (const path of new Set(refs.map(ref => ref.path))) {
-    if (!editablePath(path)) continue;
+    if (!editablePath(path) || !hashes.has(path)) continue;
     // A historical implementation path that no longer exists cannot become editable.
     const content = await readSourceText(tree, path).catch(error => {
       if (refs.some(ref => ref.path === path && !historical(ref))) throw error;

@@ -412,10 +412,11 @@ it.each([
   expect(f.propose).not.toHaveBeenCalled();
 });
 
-it('does not turn a removed historical implementation path into an editable file', async () => {
+it.each([false,true])('does not turn an unindexed historical implementation path into an editable file (still exists: %s)', async exists => {
   const f = await fixture();
   releaseWithEarlierImplementation(f);
   const removed = { path: 'packages/removed/old.js', startLine: 1, endLine: 1, hash: hashBytes('gone'), excerpt: 'gone' };
+  if(exists){await mkdir(join(f.repositoryPath,'packages/removed'));await writeFile(join(f.repositoryPath,removed.path),'gone');}
   for (const result of f.job.sourceRun.results) result.checks[0].sources.push(removed);
   await f.reviewed();
   const input = f.propose.mock.calls[0][0] as { editable: string[]; sources: { path: string }[] };
