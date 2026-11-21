@@ -30,6 +30,12 @@ function matchesFinding(finding:ProjectFinding,result:ProjectTesterResult){
   (finding.confidence==='inconclusive'||(result.run.verdict==='failed'&&finding.failedCheckIds.length>0));
 }
 
+function requirePreviousCoverage(discovery:ProjectDiscovery,previous?:ProjectRun){
+ if(previous?.results.some(result=>!same(discovery.plan.journeys.find(journey=>journey.id===result.journey.id),result.journey)||
+    !same(discovery.plan.testers.find(tester=>tester.id===result.tester.id),result.tester)))
+  throw new Error('Release execution removed or changed a previous frozen journey or tester');
+}
+
 function matchesResult(result:ProjectTesterResult,tester:ProjectTester,journey:ProjectJourney,capturePreserve:boolean) {
  const {run,checks}=result;
  if(!same(result.tester,tester)||!ProjectJourneySchema.safeParse(result.journey).success||
@@ -159,6 +165,7 @@ export function createProjectStore(db:Database.Database){
     const {project}=job.data as {project:Project};
     const running=saveRun({...original,status:'running',phase:'Starting your test team'});
     let discovery=validateDiscovery(original.discovery!,project);
+    const previous=original.request.mode==='release'?runs(project.id).find(run=>run.id!==original.id&&run.status==='completed'&&!run.error&&run.results.length):undefined;
     let canRefresh=true;
     const result=await runtime.execute(structuredClone(project),privateData,structuredClone(running),history(project.id),update=>{
      if(getRun(job.id)?.status!=='running')return;
@@ -167,12 +174,14 @@ export function createProjectStore(db:Database.Database){
      const refreshed=candidate&&canRefresh&&!update.results.length&&!same(candidate,discovery)&&
       (original.request.mode==='release'||candidate.index?.version!==discovery.index.version)
       ?validateDiscovery(candidate,project,discovery):undefined;
+     if(refreshed||update.results.length)requirePreviousCoverage(refreshed??discovery,previous);
      const progress=validateRunUpdate(update,original,refreshed??discovery,'running');
      saveRun(progress);
      if(refreshed)discovery=refreshed;
      if(refreshed||progress.results.length)canRefresh=false;
-    });
+    },previous?structuredClone(previous):undefined);
     if(result.status!=='completed')throw new Error('Project worker returned unfinished results');
+    requirePreviousCoverage(discovery,previous);
     const finished=validateRunUpdate(result,original,discovery,'completed');
     finished.finishedAt??=now();
     if(finished.error)finished.error=safeError(new Error(finished.error),privateData);
@@ -182,7 +191,7 @@ export function createProjectStore(db:Database.Database){
       const h:ProjectHistory={testerId:tester.id,runId:run.id,goal:journey.goal,outcome:run.verdict??'inconclusive',observations:run.steps.slice(-3).map(s=>s.observation.slice(0,2000)),createdAt:finished.finishedAt!};
       db.prepare('INSERT OR IGNORE INTO dev_project_history VALUES(?,?,?,?)').run(project.id,h.testerId,h.runId,JSON.stringify(h));
      }
-     save({...requireProject(project.id),discovery:finished.discovery,updatedAt:now()});
+     if(!previous)save({...requireProject(project.id),discovery:finished.discovery,updatedAt:now()});
     }).immediate();
    }else{
     if(!runtime.repair)throw new Error('Private repair execution is not configured');

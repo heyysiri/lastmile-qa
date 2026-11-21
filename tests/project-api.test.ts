@@ -90,6 +90,26 @@ it('returns a validation response for a malformed application URL',async()=>{
  expect(response.statusCode).toBe(400);
  expect(response.json()).toMatchObject({code:'validation'});
 });
+
+it.each([false,true])('passes the previous completed evidence and rejects removed release checks (drop=%s)',async(drop)=>{
+ let received:ProjectRun|undefined;
+ const execute:ProjectRuntime['execute']=async(_project,_secrets,run,_history,update,previous)=>{
+  if(run.request.mode==='release'){
+   received=previous;
+   if(!previous)throw new Error('Previous evidence missing');
+   const refreshed=structuredClone(run.discovery!);refreshed.plan.journeys=previous.results.map(result=>structuredClone(result.journey));
+   if(drop)refreshed.plan.journeys[0].checks.pop();
+   run.discovery=refreshed;update(run);
+  }
+  return complete(run);
+ };
+ const {app,root}=await setup({discover:async p=>discover(p),execute});const project=await connect(app,root);
+ const first=await startRun(app,project);await expect.poll(async()=>(await readRun(app,first.id)).status).toBe('completed');
+ const next=(await post(app,`/api/projects/${project.id}/runs`,{requestId:'release-2',mode:'release'})).json<ProjectRun>();
+ await expect.poll(async()=>(await readRun(app,next.id)).status).toBe('completed');const done=await readRun(app,next.id);
+ expect(received?.id).toBe(first.id);
+ if(drop)expect(done.error).toMatch(/prior|previous|frozen/i);else expect(done.error).toBeUndefined();
+});
 it.each([
  ['invalid plan',(d:ProjectDiscovery)=>{d.plan.features=[];}],
  ['duplicate planned checks',(d:ProjectDiscovery)=>{d.plan.journeys[0].checks[1].id=d.plan.journeys[0].checks[0].id;}],

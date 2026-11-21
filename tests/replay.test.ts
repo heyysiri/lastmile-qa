@@ -27,6 +27,13 @@ function passedRun(overrides: Partial<EvidenceRun> = {}, actions: RecordedAction
 }
 const target = (extra: Partial<EvidenceRun> = {}) => passedRun({ id: 'run-target', verdict: null, status: 'queued', assertions: [], ...extra });
 
+it('retains query/hash identity and rejects navigation redirected to another record for new recordings',async()=>{
+ const actions:RecordedAction[]=[{...rec({tool:'navigate',path:'/edit?id=42#name'}),url:'http://127.0.0.1/edit?id=42#name',urlBefore:'blank',routeVersion:2}];
+ const plan=buildReplay(passedRun({},actions));expect(plan.actions[0].url).toBe('/edit?id=42#name');expect(plan.actions[0].routeVersion).toBe(2);
+ expect((await executeReplay(plan,target(),async()=> 'Ready',async()=>({url:'/edit?id=43#name',focus:'none'}))).compatible).toBe(false);
+ expect((await executeReplay(plan,target(),async()=> 'Ready',async()=>({url:'/edit?id=42#name',focus:'none'}))).compatible).toBe(true);
+});
+
 describe('buildReplay', () => {
   it('builds a hashed plan from a verifier-passed run with symbolic input refs and no literal input copies', () => {
     const plan = buildReplay(passedRun());

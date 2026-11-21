@@ -68,13 +68,15 @@ function checkActions(actions: unknown, inputs: Record<string, InputValue>): Rec
     if (action.tool === 'navigate' && !isAllowedNavigatePath(action.path)) fail(`Action ${position}: navigation path is not allowed`);
     if ((action.tool === 'fill' || action.tool === 'select') && 'input' in action.value) checkInputRef(action.value.input, inputs, 'scalar', position);
     if (action.tool === 'uploadFixture') checkInputRef(action.input, inputs, 'fixture', position);
-    return { action, url: recorded!.url!, observation: recorded!.observation!, ...(typeof recorded!.urlBefore==='string'?{urlBefore:recorded!.urlBefore}:{}),...(typeof recorded!.focusBefore==='string'?{focusBefore:recorded!.focusBefore}:{}) };
+    if(recorded!.routeVersion!==undefined&&recorded!.routeVersion!==2)fail(`Action ${position}: unsupported route evidence`);
+    return { action, url: recorded!.url!, observation: recorded!.observation!, ...(typeof recorded!.urlBefore==='string'?{urlBefore:recorded!.urlBefore}:{}),...(typeof recorded!.focusBefore==='string'?{focusBefore:recorded!.focusBefore}:{}),...(recorded!.routeVersion===2?{routeVersion:2 as const}:{}) };
   });
 }
 
 function pathOnly(url: string): string {
   try { return new URL(url, DUMMY_ORIGIN).pathname; } catch { return ''; }
 }
+function fullRoute(raw:string):string {try{const url=new URL(raw,DUMMY_ORIGIN);return url.pathname+url.search+url.hash;}catch{return '';}}
 
 /** First line only, bounded, with run input values replaced by symbolic references. */
 function sanitizeObservation(text: string, inputs: Record<string, InputValue>): string {
@@ -97,7 +99,7 @@ export function buildReplay(run: EvidenceRun): ReplayPlan {
   if (!evidence.scenarioHash) return fail('Run evidence has no scenario hash');
   if (!evidence.finishedByAgent) return fail('Run has no agent finish evidence');
   const actions = checkActions(evidence.actions, run.inputs).map(entry => ({
-    ...entry, action: entry.action, url: pathOnly(entry.url), observation: sanitizeObservation(entry.observation, run.inputs),
+    ...entry, action: entry.action, url: entry.routeVersion===2?fullRoute(entry.url):pathOnly(entry.url), observation: sanitizeObservation(entry.observation, run.inputs),
   }));
   const body = { version: 1 as const, sourceRunIds: [run.id], scenarioHash: evidence.scenarioHash, buildId: evidence.buildId, actions };
   return { ...body, hash: hashReplayPlan(body) };
@@ -136,9 +138,11 @@ export async function executeReplay(plan: ReplayPlan, run: EvidenceRun, execute:
     const position = index + 1;
     try {
       if(entry.action.tool==='pressKey'&&(!inspect||entry.focusBefore===undefined))return fail('Keyboard replay lacks semantic focus evidence');
-      if(inspect&&entry.action.tool!=='navigate'){const current=await inspect();if(entry.urlBefore!==undefined&&current.url!==entry.urlBefore)return fail('Replay route differs');if(entry.action.tool==='pressKey'&&current.focus!==entry.focusBefore)return fail('Replay focused control differs');}
+      if(entry.routeVersion===2&&!inspect)return fail('Replay requires full route inspection');
+      if(inspect&&entry.action.tool!=='navigate'){const current=await inspect();const route=entry.routeVersion===2?fullRoute(current.url):pathOnly(current.url);if(entry.urlBefore!==undefined&&route!==entry.urlBefore)return fail('Replay route differs');if(entry.action.tool==='pressKey'&&current.focus!==entry.focusBefore)return fail('Replay focused control differs');}
       const observation = await execute(entry.action);
       if (typeof observation === 'string' && ERROR_OBSERVATION.test(observation)) return fail('dispatcher reported an error');
+      if(entry.routeVersion===2&&inspect&&fullRoute((await inspect()).url)!==fullRoute(entry.url))return fail('Replay reached a different destination');
     } catch (error) {
       const detail = error instanceof ReplayError ? error.message : safeMessage(error);
       return { compatible: false, message: `Replay mismatch at action ${position} (${entry.action.tool}): ${detail}` };
