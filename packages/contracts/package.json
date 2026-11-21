@@ -5,7 +5,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./examples": "./src/examples.ts",
-    "./runtime": "./src/runtime.ts"
+    "./runtime": "./src/runtime.ts",
+    "./studies": "./src/studies.ts"
   },
   "dependencies": {
     "zod": "^4.3.5"
