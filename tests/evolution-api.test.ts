@@ -584,3 +584,14 @@ it('rejects preparation and verification while a population execution is active'
     await completedExecution(execution);
   } finally { runGate.release(); }
 });
+it('serves the actual isolated replay evidence through the authenticated run endpoint',async()=>{
+ setup({repairRuntime:runtime});
+ const population=await enroll();
+ const candidate=await compare(population,await completedExecution(await launch(population)));
+ const response=await post('/api/repairs',{requestId:'repair-evidence',executionId:candidate.id});
+ const job=await waitForStatus<RepairJob>(`/api/repairs/${response.json().id}`,'awaiting_review');
+ const trial=job.reproduction![0].run;
+ expect((await get(`/api/runs/${trial.id}`)).statusCode).toBe(200);
+ expect((await get(`/api/runs/${trial.id}`)).json()).toEqual(trial);
+ expect((await app!.inject(`/api/runs/${trial.id}`)).statusCode).toBe(401);
+});

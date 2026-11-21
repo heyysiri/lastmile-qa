@@ -7,28 +7,44 @@ import { createApplications, validateApplicationInputValues } from './applicatio
 import { createStudyGenerator } from './study-generator';
 import {createPersistentSessionPreparer} from './persistent-session';
 import {createApplicationContextReader} from './application-context';
+import {createJourneyPlanner} from './journey-planner';
+import {createOscarApplication} from './oscar-application';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 config({ path: resolve(root, '.env'), quiet: true });
 
 try {
-  const prepareSession=createPersistentSessionPreparer({origin:process.env.SELLER_DEMO_URL || 'http://127.0.0.1:3001',testToken:process.env.TEST_API_TOKEN || 'local-development-test'});
-  const journey = createJourneyExecutor({prepareSession,origin:process.env.SELLER_DEMO_URL || 'http://127.0.0.1:3001',artifactRoot:resolve(root,process.env.ARTIFACT_ROOT || 'artifacts/runs'),testToken:process.env.TEST_API_TOKEN || 'local-development-test',apiKey:process.env.OPENAI_API_KEY,model:process.env.OPENAI_MODEL || 'gpt-4.1-mini'});
+  const oscar=process.env.LASTMILE_APPLICATION==='oscar';
+  const origin=oscar?(process.env.OSCAR_URL||'http://127.0.0.1:8000'):(process.env.SELLER_DEMO_URL||'http://127.0.0.1:3001');
+  const testToken=process.env.TEST_API_TOKEN||'local-development-test';
+  const model=process.env.OPENAI_MODEL||'gpt-4.1-mini';
+  const apiKey=process.env.OPENAI_API_KEY;
+  const artifactRoot=resolve(root,process.env.ARTIFACT_ROOT||'artifacts/runs');
+  const applicationRoot=oscar?resolve(root,process.env.OSCAR_ROOT||'.local-work/p2/oscar-upstream'):root;
+  const sources:Parameters<typeof createApplicationContextReader>[1]=oscar?{'oscar-commerce':[
+    {kind:'requirement' as const,path:'.lastmile/requirements.md'},
+    {kind:'code' as const,path:'src/oscar/apps/customer/views.py',focus:'class ProfileUpdateView('},
+    {kind:'code' as const,path:'src/oscar/apps/customer/forms.py',focus:'class UserForm('},
+    {kind:'code' as const,path:'src/oscar/apps/basket/views.py',focus:'class BasketView('},
+    {kind:'code' as const,path:'src/oscar/apps/basket/abstract_models.py',focus:'    def add_product('},
+  ]}:{'seller-demo':[
+    {kind:'requirement' as const,path:'apps/seller-demo/requirements.md'},
+    {kind:'code' as const,path:'apps/seller-demo/lib/api.ts'},
+    {kind:'code' as const,path:'apps/seller-demo/lib/store.ts'},
+    {kind:'code' as const,path:'apps/seller-demo/components/StoreForm.tsx'},
+    {kind:'code' as const,path:'apps/seller-demo/components/InventoryForm.tsx'},
+  ]};
+  const journey = createJourneyExecutor({prepareSession:createPersistentSessionPreparer({origin,testToken}),origin,artifactRoot,testToken,apiKey,model});
   const app = createServer({
-    getApplicationContext: createApplicationContextReader(root, {'seller-demo': [
-      {kind:'requirement',path:'apps/seller-demo/requirements.md'},
-      {kind:'code',path:'apps/seller-demo/lib/api.ts'},
-      {kind:'code',path:'apps/seller-demo/lib/store.ts'},
-      {kind:'code',path:'apps/seller-demo/components/StoreForm.tsx'},
-      {kind:'code',path:'apps/seller-demo/components/InventoryForm.tsx'},
-    ]}),
+    getApplicationContext:createApplicationContextReader(applicationRoot,sources),
+    generateSuggestions:createJourneyPlanner({apiKey,model}),
     validateStudyUser: validateApplicationInputValues,
-    applications: createApplications(process.env.SELLER_DEMO_URL || 'http://127.0.0.1:3001'),
-    generateStudy: createStudyGenerator({ apiKey: process.env.OPENAI_API_KEY, model: process.env.OPENAI_MODEL || 'gpt-4.1-mini', testToken: process.env.TEST_API_TOKEN || 'local-development-test' }),
+    applications: oscar?[createOscarApplication(origin)]:createApplications(origin),
+    generateStudy: createStudyGenerator({apiKey,model,testToken}),
     databasePath: resolve(root, process.env.QA_DATABASE_PATH || '.data/qa.sqlite'),
-    artifactRoot: resolve(root, process.env.ARTIFACT_ROOT || 'artifacts/runs'),
-    sellerDemoUrl: process.env.SELLER_DEMO_URL,
-    getBuildId:async()=>{const response=await fetch(new URL('/api/test/build',process.env.SELLER_DEMO_URL||'http://127.0.0.1:3001'),{headers:{authorization:`Bearer ${process.env.TEST_API_TOKEN||'local-development-test'}`},redirect:'error',signal:AbortSignal.timeout(5000)});if(!response.ok)throw new Error('Build service unavailable');const body=await response.json();if(typeof body.buildId!=='string'||!body.buildId)throw new Error('Build identity missing');return body.buildId;},
+    artifactRoot,
+    sellerDemoUrl:origin,
+    getBuildId:async()=>{const response=await fetch(new URL('/api/test/build',origin),{headers:{authorization:`Bearer ${testToken}`},redirect:'error',signal:AbortSignal.timeout(5000)});if(!response.ok)throw new Error('Build service unavailable');const body=await response.json();if(typeof body.buildId!=='string'||!body.buildId)throw new Error('Build identity missing');return body.buildId;},
     executeRun: journey,
     executeReplay: journey,
   });

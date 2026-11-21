@@ -317,7 +317,7 @@ export function createServer(options: ServerOptions) {
   });
 
   function requireRun(id: string) {
-    const run = store.getRun(id);
+    const run = store.getRun(id) ?? store.evolution.listRepairs().flatMap(job => [...(job.reproduction ?? []), ...(job.verification?.trials ?? [])]).find(trial => trial.run.id === id)?.run;
     if (!run) throw new RunnerError(404, 'not_found', 'Run does not exist');
     return run;
   }

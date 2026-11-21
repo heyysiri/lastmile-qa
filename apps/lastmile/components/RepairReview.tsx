@@ -123,8 +123,7 @@ function RepairTrials({ title, trials, execution }: { title: string; trials: Rep
         const index = execution.population.testers.findIndex(item => item.id === trial.testerId);
         const tester = execution.population.testers[index];
         const originalId = execution.members.find(item => item.testerId === trial.testerId)?.runId;
-        const original = execution.runs.find(item => item.id === originalId);
-        const screenshot = original?.artifacts.find(path => path.split('/').at(-1) === 'final.png');
+        const screenshot = trial.run.artifacts.find(path => path.split('/').at(-1) === 'final.png');
         const tone = trial.outcome === 'passed' ? 'mint' : trial.outcome === 'failed' ? 'peach' : 'lilac';
         return <article className={`studio-card result-card tone-${Math.max(0, index) % 3}`} key={trial.testerId}>
           <header className="tester-heading"><TesterFace index={Math.max(0, index)} />
@@ -134,10 +133,11 @@ function RepairTrials({ title, trials, execution }: { title: string; trials: Rep
           <p>{trial.message}</p>
           <p className="field-hint">{trial.run.scenario.goal}</p>
           <RunChecks run={trial.run} />
-          <RunSteps run={trial.run} showArtifactLinks={false} />
+          <RunSteps run={trial.run} />
           {originalId && <div className="population-evidence-links">
             <Link href={`/runs/${encodeURIComponent(originalId)}`} className="evidence-link">Original comparison evidence <ArrowUpRight size={15} aria-hidden="true" /></Link>
-            {screenshot && <a className="evidence-link" href={artifactHref(originalId, screenshot)} target="_blank" rel="noreferrer">Original comparison screenshot</a>}
+            <Link href={`/runs/${encodeURIComponent(trial.run.id)}`} className="evidence-link">This replay’s evidence <ArrowUpRight size={15} aria-hidden="true" /></Link>
+            {screenshot && <a className="evidence-link" href={artifactHref(trial.run.id, screenshot)} target="_blank" rel="noreferrer">This replay’s screenshot</a>}
           </div>}
         </article>;
       })}

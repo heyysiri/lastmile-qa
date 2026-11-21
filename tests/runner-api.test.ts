@@ -39,7 +39,7 @@ function setup(options: Partial<ServerOptions> = {}) {
 it('requires bearer authentication except on health and checks mutation origins', async () => {
   const app = setup();
   expect((await app.inject('/api/health')).json()).toEqual({
-    status: 'ok', modelConfigured: false, executionReady: false,
+    status: 'ok', modelConfigured: false, executionReady: false, suggestionsReady: false, repairsReady: false,
   });
   expect((await app.inject('/api/scenarios')).statusCode).toBe(401);
   expect((await app.inject({ url: '/api/capabilities', headers })).json()).toEqual(

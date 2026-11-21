@@ -38,3 +38,9 @@ describe('grounded next journey planner',()=>{
   const complete=vi.fn();await expect(createJourneyPlanner({model:'test',complete})(snapshot())).rejects.toThrow('Configure OpenAI');expect(complete).not.toHaveBeenCalled();
  });
 });
+it('keeps account identity fixed and grounds proposals in independent observed check results',()=>{
+ const input=plannerContext(snapshot());
+ expect(input.testers[0].initialStateId).toBe('active-seller');
+ expect(input.testers[0].history[0].verifiedChecks).toContainEqual({id:'qty',status:'passed',actual:250});
+ expect(input.accountContinuity).toMatch(/never reset/i);
+});
