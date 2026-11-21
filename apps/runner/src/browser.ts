@@ -23,6 +23,7 @@ export type BrowserSession = {
   execute(action: BrowserAction): Promise<string>;
   observe(): Promise<string>;
   refreshObservation(): Promise<string>;
+  inspectReplayPosition(): Promise<{url:string;focus:string}>;
   actions: RecordedAction[];
   capabilities: AppliedCapability[];
   networkEvents: unknown[];
@@ -49,6 +50,12 @@ function cleanUrl(raw: string) {
   return url.origin === 'null' ? url.protocol : url.origin + url.pathname;
 }
 
+export function routeIdentity(raw: string): string {
+  if (raw === 'blank') return raw;
+  const url = new URL(raw.startsWith('/') ? 'http://route.invalid' + raw : raw);
+  return url.pathname + url.search + url.hash;
+}
+
 function semanticLocator(page: Page, locator: LocatorSpec) {
   switch (locator.by) {
     case 'role':
@@ -59,19 +66,61 @@ function semanticLocator(page: Page, locator: LocatorSpec) {
   }
 }
 
-export async function replayPosition(page:Page):Promise<{url:string;focus:string}> {
-  const focus=await page.locator(':focus').count()===1 ? await page.locator(':focus').evaluate(el=>JSON.stringify({
+export async function replayPosition(page:Page, redact = (value:string) => value):Promise<{url:string;focus:string}> {
+  const focus=await page.locator(':focus').count()===1 ? await page.locator(':focus').evaluate(el=>({
     tag:el.tagName,role:el.getAttribute('role'),id:el.id,
     name:el.getAttribute('aria-label') || ('labels' in el ? Array.from((el as HTMLInputElement).labels || []).map(label=>label.textContent?.trim()).join(' ') : '') || (['BUTTON','A'].includes(el.tagName)?el.textContent?.trim():'')
   }),undefined,{timeout:1000}) : 'none';
-  return {url:new URL(page.url()).pathname,focus};
+  return {
+    url: routeIdentity(page.url()),
+    focus: typeof focus === 'string' ? focus : JSON.stringify({
+      tag: redact(focus.tag), role: focus.role === null ? null : redact(focus.role), id: redact(focus.id), name: redact(focus.name),
+    }),
+  };
 }
 
 export async function createBrowserSession(options: BrowserSessionOptions): Promise<BrowserSession> {
   const { pack, inputs, artifactDirectory, signal, onStep } = options;
   const origin = new URL(options.origin).origin;
   const extraOrigins=(options.allowedOrigins??[]).map(value=>new URL(value).origin);
-  const redact=(text:string)=>(options.redactValues??[]).filter(Boolean).reduce((s,value)=>s.replaceAll(value,'[private]'),text);
+  const privateValues = (options.redactValues ?? []).filter(Boolean);
+  const spellings = [...new Set(privateValues.flatMap(value => [value, JSON.stringify(value).slice(1,-1)]))]
+    .sort((a, b) => b.length - a.length);
+  const privatePattern = spellings.length
+    ? new RegExp(spellings.map(value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g')
+    : undefined;
+
+  function containsPrivate(text: string) {
+    if (!privateValues.length) return false;
+    // Check escaped URL components, including form query values and nested encoding.
+    for (let round = 0; round < 4; round++) {
+      const formText = text.replaceAll('+', ' ');
+      if (privateValues.some(value => text.includes(value) || formText.includes(value))) return true;
+      const decoded = text.replace(/(?:%[0-9a-f]{2})+/gi, bytes => Buffer.from(bytes.replaceAll('%',''), 'hex').toString());
+      if (decoded === text) return false;
+      text = decoded;
+    }
+    return true;
+  }
+
+  function redact(text: string) {
+    const result = privatePattern ? text.replace(privatePattern, '[private]') : text;
+    return containsPrivate(result) ? '[private]' : result;
+  }
+
+  function redactEvidence(value: unknown): unknown {
+    if (typeof value === 'string') return redact(value);
+    if (typeof value === 'number' || typeof value === 'boolean') return containsPrivate(String(value)) ? '[private]' : value;
+    if (Array.isArray(value)) return value.map(redactEvidence);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => [redact(key), redactEvidence(item)]));
+    }
+    return value;
+  }
+
+  function requirePublicRoute(raw: string) {
+    if (containsPrivate(raw)) throw new BrowserActionError('Browser route contains private account data and cannot be replayed');
+  }
   const deadline = performance.now() + 180_000;
   const journeySignal = AbortSignal.any([signal, AbortSignal.timeout(180_000)]);
   if (signal.aborted) throw new BrowserActionError('Browser journey cancelled');
@@ -90,18 +139,21 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
     const networkEvents: unknown[] = [];
     const network: AppliedCapability = {
       factor: 'network', status: pack.network.mode === 'normal' ? 'applied' : 'not_exercised',
-      value: { ...pack.network, matchedRequests: 0 },
+      value: redactEvidence({ ...pack.network, matchedRequests: 0 }),
     };
     const capabilities: AppliedCapability[] = [
-      { factor: 'viewport', status: 'applied', value: pack.viewport },
-      { factor: 'locale', status: 'applied', value: pack.locale },
+      { factor: 'viewport', status: 'applied', value: redactEvidence(pack.viewport) },
+      { factor: 'locale', status: 'applied', value: redact(pack.locale) },
       { factor: 'reducedMotion', status: 'applied', value: pack.reducedMotion },
       { factor: 'interaction', status: 'applied', value: pack.interaction },
       network,
-      { factor: 'inputs', status: Object.values(inputs).some(value => typeof value === 'object') ? 'unsupported' : 'applied', value: Object.fromEntries(Object.entries(inputs).map(([key,value])=>[key,typeof value==='string'?redact(value):value])) },
-      { factor: 'preferredLanguage', status: 'guidance_only', value: pack.preferredLanguage },
-      { factor: 'familiarity', status: 'guidance_only', value: { familiarity: pack.familiarity, knownTerms: pack.knownTerms } },
+      { factor: 'inputs', status: Object.values(inputs).some(value => typeof value === 'object') ? 'unsupported' : 'applied', value: redactEvidence(inputs) },
+      { factor: 'preferredLanguage', status: 'guidance_only', value: redact(pack.preferredLanguage) },
+      { factor: 'familiarity', status: 'guidance_only', value: redactEvidence({ familiarity: pack.familiarity, knownTerms: pack.knownTerms }) },
     ];
+    if (privateValues.length) {
+      capabilities.push({ factor: 'screenshots', status: 'unsupported', value: 'Suppressed for private account data' });
+    }
 
     const page = await session.newPage();
     await session.routeWebSocket(/.*/, socket => {
@@ -117,11 +169,11 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
     session.on('requestfinished', request => pending.delete(request));
     session.on('requestfailed', request => {
       pending.delete(request);
-      networkEvents.push({ kind: 'transport_failure', url: cleanUrl(request.url()), method: request.method() });
+      networkEvents.push({ kind: 'transport_failure', url: redact(cleanUrl(request.url())), method: redact(request.method()) });
     });
     session.on('response', response => {
       if (response.status() >= 400) {
-        networkEvents.push({ kind: 'http_error', url: cleanUrl(response.url()), method: response.request().method(), status: response.status() });
+        networkEvents.push({ kind: 'http_error', url: redact(cleanUrl(response.url())), method: redact(response.request().method()), status: response.status() });
       }
     });
 
@@ -131,8 +183,8 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
       const started = performance.now();
       await delay(profile.delayMs, undefined, { signal: journeySignal });
       network.status = 'applied';
-      network.value = { ...profile, matchedRequests: ++matchedRequests };
-      networkEvents.push({ kind: 'request_delay', url: cleanUrl(url.href), delayMs: profile.delayMs, elapsedMs: Math.round(performance.now() - started) });
+      network.value = redactEvidence({ ...profile, matchedRequests: ++matchedRequests });
+      networkEvents.push({ kind: 'request_delay', url: redact(cleanUrl(url.href)), delayMs: profile.delayMs, elapsedMs: Math.round(performance.now() - started) });
     }
 
     await session.route('**/*', async route => {
@@ -177,10 +229,35 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
     let observed: Locator | undefined;
     let closing: Promise<void> | undefined;
 
+    function recordableUrl() {
+      const url = page.url();
+      requirePublicRoute(url);
+      if (url !== 'about:blank' && !allowed(new URL(url), origin)) {
+        throw new BrowserActionError('Browser reached a blocked location');
+      }
+      return url;
+    }
+
+    async function inspectReplayPosition() {
+      const position = await replayPosition(page, redact);
+      return { ...position, url: routeIdentity(recordableUrl()) };
+    }
+
+    async function saveScreenshot(name: string, timing: {timeout:number;signal?:AbortSignal}) {
+      // An app can draw account strings into images, canvas, or closed shadow roots.
+      // Suppress these screenshots before capture because DOM masks cannot cover those pixels.
+      if (privateValues.length) return false;
+      await page.screenshot({
+        ...timing, path: join(artifactDirectory, name),
+        mask: page.frames().map(frame => frame.locator('input[type="password" i]')),
+      });
+      return true;
+    }
+
     function scalar(value: Parameters<typeof resolveExpected>[0]) {
       let resolved: InputValue;
       try { resolved = resolveExpected(value, inputs); }
-      catch { throw new BrowserActionError(`Unknown input slot. Available slot names: ${Object.keys(inputs).join(', ')}`); }
+      catch { throw new BrowserActionError('Unknown input slot. Available slot names: ' + redact(Object.keys(inputs).join(', '))); }
       if (typeof resolved === 'object') throw new BrowserActionError('A file fixture cannot be entered as text');
       return String(resolved);
     }
@@ -208,6 +285,7 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
           if (!/^\/(?!\/)[^\\]*$/.test(path) || !allowed(url, origin)) {
             throw new BrowserActionError('Navigation is outside the approved routes');
           }
+          requirePublicRoute(url.href);
           await page.goto(url.href, { ...timing, waitUntil: 'domcontentloaded' });
           break;
         }
@@ -247,19 +325,16 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
     }
 
     async function snapshot(timing:{timeout:number;signal:AbortSignal}) {
-        const url = page.url();
-        if (url !== 'about:blank' && !allowed(new URL(url), origin)) {
-          throw new BrowserActionError('Browser reached a blocked location');
-        }
-        const focusRef = await page.locator(':focus').count() === 1
-          ? await page.locator(':focus').ariaSnapshot({ depth: 1, ...timing }) : '';
-        const snapshot = (await page.ariaSnapshot({ mode: 'ai', ...timing })).slice(0, 16_000);
-        const refs = snapshot.split('\n').flatMap(line => {
-          const ref = /\[ref=((?:f\d+)?e\d+)\]/.exec(line)?.[1];
-          return ref && !line.includes('[aria-hidden]') ? [page.getByRef(ref)] : [];
-        });
-        observed = refs.reduce<Locator | undefined>((locators, ref) => locators ? locators.or(ref) : ref, undefined);
-        return redact(`URL: ${cleanUrl(url)}\nFocused: ${focusRef.trim().split('\n')[0] || 'none'}\n${snapshot}`);
+      const url = recordableUrl();
+      const focusRef = await page.locator(':focus').count() === 1
+        ? await page.locator(':focus').ariaSnapshot({ depth: 1, ...timing }) : '';
+      const snapshot = redact(await page.ariaSnapshot({ mode: 'ai', ...timing })).slice(0, 16_000);
+      const refs = snapshot.split('\n').flatMap(line => {
+        const ref = /\[ref=((?:f\d+)?e\d+)\]/.exec(line)?.[1];
+        return ref && !line.includes('[aria-hidden]') ? [page.getByRef(ref)] : [];
+      });
+      observed = refs.reduce<Locator | undefined>((locators, ref) => locators ? locators.or(ref) : ref, undefined);
+      return 'URL: ' + redact(cleanUrl(url)) + '\nFocused: ' + (redact(focusRef).trim().split('\n')[0] || 'none') + '\n' + snapshot;
     }
 
     async function refreshObservation() {
@@ -289,18 +364,33 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
       let observation = 'Browser action could not be completed';
       let failure: BrowserActionError | undefined;
       let before:{url:string;focus:string}|undefined;
+      let after: string | undefined;
+      let stepArguments: BrowserAction | undefined;
       busy = true;
       let cancelStep: () => void = () => {};
       const work = (async () => {
-        before=await replayPosition(page);
-        if (action) await dispatch(action, timing());
+        if (action) {
+          if (action.tool === 'navigate') {
+            requirePublicRoute(action.path);
+          } else {
+            const evidence = JSON.stringify(Object.entries(action).filter(([field]) => field !== 'tool'));
+            if (redact(evidence) !== evidence) {
+              throw new BrowserActionError('Browser action contains private account data. Use an input slot for account values.');
+            }
+          }
+          stepArguments = action;
+          before = await inspectReplayPosition();
+          await dispatch(action, timing());
+        }
         // Give UI updates a brief window, extending it for pending delayed requests.
         const settleUntil = Math.min(end - 400, performance.now() + (pack.network.mode === 'request_delay' ? pack.network.delayMs : 0) + 450);
         do {
           if (performance.now() + 100 > settleUntil) break;
           await delay(100, undefined, { signal: stepSignal });
         } while (pending.size);
-        return snapshot(timing());
+        const result = await snapshot(timing());
+        after = recordableUrl();
+        return result;
       })();
       try {
         const cancelled = new Promise<never>((_, reject) => {
@@ -319,8 +409,8 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
           observation = failure.message;
         }
         if (!stepSignal.aborted) {
-          await page.screenshot({ path: join(artifactDirectory, image), ...timing() })
-            .then(() => { screenshot = image; }, () => {});
+          await saveScreenshot(image, timing())
+            .then(saved => { if (saved) screenshot = image; }, () => {});
         }
         if (failure) throw failure;
         if (stepSignal.aborted) {
@@ -328,17 +418,21 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
           observation = failure.message;
           throw failure;
         }
-        if (action) actions.push({ action, url: cleanUrl(page.url()), observation, urlBefore:before?.url, focusBefore:before?.focus });
+        if (action && before && after) {
+          // The absolute destination retains the source origin for storage-state rebinding.
+          const recorded = { action, url: after, routeVersion: 2 as const, observation, urlBefore: before.url, focusBefore: before.focus };
+          actions.push(recorded);
+        }
         return observation;
       } finally {
         stepSignal.removeEventListener('abort', cancelStep);
         busy = false;
-        onStep({ index: seq, timestamp, action: action?.tool ?? 'observe', arguments: action, observation, screenshot });
+        onStep({ index: seq, timestamp, action: action?.tool ?? 'observe', arguments: stepArguments, observation, screenshot });
       }
     }
 
     return {
-      page, actions, capabilities, networkEvents, refreshObservation,
+      page, actions, capabilities, networkEvents, refreshObservation, inspectReplayPosition,
       storageState:()=>session.storageState(),
       observe: () => step(),
       execute: async action => {
@@ -350,7 +444,7 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
         let artifactError = false;
         try {
           if (!page.isClosed()) {
-            await page.screenshot({ path: join(artifactDirectory, 'final.png'), timeout: 2_000 }).catch(() => { artifactError = true; });
+            await saveScreenshot('final.png', { timeout: 2_000 }).catch(() => { artifactError = true; });
           }
         } finally {
           try { await session.close(); }
