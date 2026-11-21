@@ -23,7 +23,11 @@ export const OutcomeContractSchema = z.object({
   scope: z.enum(['ui_only', 'ui_and_api']), assertions: z.array(AssertionSchema).min(1).max(30),
 }).strict().superRefine((c, ctx) => {
   if (new Set(c.assertions.map(a => a.id)).size !== c.assertions.length) ctx.addIssue({ code: 'custom', message: 'Assertion IDs must be unique' });
-  if (c.scope === 'ui_and_api' && (!c.assertions.some(a => a.kind.startsWith('state_')) || !c.assertions.some(a => !a.kind.startsWith('state_')))) {
+  const hasState = c.assertions.some(a => a.kind.startsWith('state_'));
+  if (c.scope === 'ui_only' && hasState) {
+    ctx.addIssue({ code: 'custom', message: 'Screen-only contracts allow only UI assertions' });
+  }
+  if (c.scope === 'ui_and_api' && (!hasState || !c.assertions.some(a => !a.kind.startsWith('state_')))) {
     ctx.addIssue({ code: 'custom', message: 'UI and persisted-state assertions are required' });
   }
 });
@@ -51,6 +55,7 @@ export const ContextPackSchema = z.object({
 export type ContextPack = z.infer<typeof ContextPackSchema>;
 
 export function compileInputs(scenario: ScenarioDefinition, context: ContextPack): Record<string, InputValue> {
+  OutcomeContractSchema.parse(scenario.contract);
   const inputs: Record<string, InputValue> = {};
   for (const [key, slot] of Object.entries(scenario.inputSlots)) {
     const value = context.inputs[key];

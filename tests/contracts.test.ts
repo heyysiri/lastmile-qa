@@ -13,6 +13,16 @@ describe('dynamic configuration boundary', () => {
       expect(ScenarioSchema.safeParse({ ...storeScenario, entryPath }).success).toBe(false);
     }
   });
+  it('allows screen-only contracts with UI predicates and rejects any persisted-state predicate', () => {
+    const [visible, state] = storeScenario.contract.assertions;
+    const scenario = { ...storeScenario, contract: { scope: 'ui_only' as const, assertions: [visible] } };
+    expect(ScenarioSchema.safeParse(scenario).success).toBe(true);
+    for (const assertions of [[state], [visible, state]]) {
+      const invalid = { ...scenario, contract: { ...scenario.contract, assertions } };
+      expect(ScenarioSchema.safeParse(invalid).success).toBe(false);
+      expect(() => compileInputs(invalid, desktopContext)).toThrow();
+    }
+  });
   it('rejects unsupported required network settings', () => {
     expect(ContextPackSchema.safeParse({ ...desktopContext, network: { mode: '4g' } }).success).toBe(false);
   });
