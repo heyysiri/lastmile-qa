@@ -59,7 +59,11 @@ function compareRelease(run: EvidenceRun, buildId: string): ReleaseComparison {
   if (run.verdict === 'failed' && failed.length) {
     return {
       ...result, outcome: 'regression',
-      message: `Assertions that passed on the baseline and failed on the candidate: ${failed.map(({ id }) => id).join(', ')}`,
+      message: failed.map(assertion => {
+        const rule=run.scenario.contract.assertions.find(item=>item.id===assertion.id);
+        const label=rule&&'path' in rule?`${rule.path} (${assertion.id})`:assertion.id;
+        return `${label}: baseline passed; candidate expected ${JSON.stringify(assertion.expected)??'configured outcome'}, observed ${JSON.stringify(assertion.actual)??'unavailable'}.`;
+      }).join(' '),
     };
   }
   if (run.verdict === 'passed' && !failed.length) {

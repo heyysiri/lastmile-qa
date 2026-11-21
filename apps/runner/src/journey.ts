@@ -48,7 +48,12 @@ export function createJourneyExecutor(options:JourneyOptions) {
         onUpdate(structuredClone(run));
       }});
       if(replay) {
-        const result=await executeReplay(replay,run,action=>session!.execute(action),()=>replayPosition(session!.page));
+        const result=await executeReplay(replay,run,async action=>{
+          // Recorded plans omit observation-only turns. Refresh the visible DOM
+          // before a mutation so client hydration cannot leave stale references.
+          if(action.tool!=='navigate')await session!.observe();
+          return session!.execute(action);
+        },()=>replayPosition(session!.page));
         complete=result.compatible; run.evidence.replayCompatible=result.compatible;
         if(!complete){failure='replay_mismatch';message=result.message||'Replay actions were incompatible with this context';}
       } else {

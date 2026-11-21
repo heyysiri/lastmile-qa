@@ -3,9 +3,9 @@ import {mkdtemp,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {desktopContext,storeScenario} from '../packages/contracts/src/examples';
-import type {EvidenceRun} from '../packages/contracts/src/runtime';
+import type {EvidenceRun,BrowserAction} from '../packages/contracts/src/runtime';
 const mocks=vi.hoisted(()=>({session:vi.fn(),agent:vi.fn(),verify:vi.fn()}));
-vi.mock('../apps/runner/src/browser',()=>({createBrowserSession:mocks.session}));
+vi.mock('../apps/runner/src/browser',()=>({createBrowserSession:mocks.session,replayPosition:async()=>({url:'/onboarding',focus:'none'})}));
 vi.mock('../apps/runner/src/agent',()=>({runAgent:mocks.agent}));
 vi.mock('../apps/runner/src/verifier',()=>({verifyOutcome:mocks.verify,safeMessage:()=> 'Safe error'}));
 import {createJourneyExecutor} from '../apps/runner/src/journey';
@@ -57,5 +57,23 @@ it('persists the before-state checkpoint and hashes frozen preservation checks b
   expect(result.evidence?.scenarioHash).toBe(hashValue(result.scenario));
   expect(result.evidence?.scenarioHash).not.toBe(hashValue(storeScenario));
   expect(result.findings[0].description).toMatch(/inventory.0.quantity.*250.*5/);
+ }finally{await rm(directory,{recursive:true,force:true});}
+});
+
+it('refreshes visible controls before each replay action without asking the model or retrying mutations',async()=>{
+ const {hashValue}=await import('../apps/runner/src/artifacts');
+ const {hashReplayPlan}=await import('../apps/runner/src/replay');
+ const directory=await mkdtemp(join(tmpdir(),'replay-observation-'));
+ const run:EvidenceRun={id:'replay-observe',requestId:'test',scenario:structuredClone(storeScenario),context:desktopContext,inputs:{storeName:'Siri Crafts'},status:'running',verdict:null,createdAt:new Date().toISOString(),manifestHash:'hash',executionMode:'deterministic',steps:[],assertions:[],findings:[],capabilities:[],artifacts:[]};
+ const plan={version:1 as const,sourceRunIds:['source'],buildId:'build',scenarioHash:hashValue(run.scenario),actions:[{action:{tool:'navigate' as const,path:'/onboarding'},url:'/onboarding',observation:'Page'},{action:{tool:'click' as const,locator:{by:'role' as const,value:'button',name:'Save store'}},url:'/onboarding',observation:'Saved'}]};
+ const calls:string[]=[];
+ let refreshed=false;
+ vi.stubGlobal('fetch',vi.fn(async(url:URL)=>Response.json(url.pathname.endsWith('/build')?{buildId:'build'}:{namespaceId:'namespace',cookie:{name:'session',value:'synthetic',path:'/'}})));
+ mocks.session.mockImplementation(async()=>({page:{},observe:async()=>{refreshed=true;calls.push('observe');return 'Fresh visible controls';},execute:async(action:BrowserAction)=>{calls.push(action.tool);if(action.tool==='click'&&!refreshed)throw new Error('Observed DOM nodes replaced during hydration');refreshed=false;return 'Done';},actions:[],capabilities:[],close:async()=>{}}));
+ mocks.verify.mockResolvedValue(storeScenario.contract.assertions.map(a=>({id:a.id,status:'passed'})));
+ try{
+  const result=await createJourneyExecutor({origin:'http://localhost:3001',artifactRoot:directory,testToken:'secret',model:'fake'})(run,()=>{},{...plan,hash:hashReplayPlan(plan)});
+  expect(result.verdict).toBe('passed');expect(result.evidence?.modelCalls).toBe(0);expect(mocks.agent).not.toHaveBeenCalled();
+  expect(calls).toEqual(['navigate','observe','click']);
  }finally{await rm(directory,{recursive:true,force:true});}
 });

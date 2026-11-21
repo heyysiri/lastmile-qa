@@ -257,6 +257,7 @@ it('rebinds only the verified plan build and classifies compatible comparisons p
     const index = Number(String(run.inputs.storeName).at(-1));
     const assertions = run.scenario.contract.assertions.map(({ id }) => ({
       id, status: id === 'preserved-stock' && index === 0 ? 'failed' as const : 'passed' as const,
+      ...(id==='preserved-stock'&&index===0?{expected:250,actual:5}:{}),
     }));
     return {
       ...run, status: 'completed', verdict: index === 0 ? 'failed' : 'passed', assertions,
@@ -283,6 +284,7 @@ it('rebinds only the verified plan build and classifies compatible comparisons p
   expect(replay).toHaveBeenCalledTimes(3);
   expect(candidate.comparisons?.map(result => result.outcome)).toEqual(['regression', 'still_passing', 'inconclusive']);
   expect(candidate.comparisons?.[0].message).toContain('preserved-stock');
+  expect(candidate.comparisons?.[0].message).toMatch(/inventory.0.quantity.*250.*5/);
   expect(candidate.comparisons?.[2].message).toMatch(/replay|compatib/i);
   for (const [index, source] of baseline.runs.entries()) {
     const originalPlan = buildReplay(source);

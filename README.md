@@ -1,6 +1,6 @@
 # LastMile QA
 
-Describe your audience, review generated synthetic testers, and run their journeys against a connected application. LastMile checks actual outcomes and keeps the evidence. Generated profiles are exploratory test cases, not measured human behavior.
+Describe your audience, review generated synthetic testers, and enroll them as persistent customers of your staging application. Keep their accounts and observed history across releases, then check whether the same customer tasks still work from identical saved starting states. Generated profiles are exploratory test cases, not measured human behavior.
 
 ## Run locally
 
@@ -17,7 +17,21 @@ Runner: http://127.0.0.1:4000
 
 Stop an existing stack before starting another. Root `.env` changes require a restart. No cloud resources or deployment are required at this checkpoint.
 
-## First generated-audience checkpoint
+## Persistent customer checkpoint
+
+Start with two testers, one updating inventory and one setting up a store. Review and save their tasks, then enroll them as a persistent population. Continuing a population reopens those same accounts; running a fresh study still creates isolated new accounts.
+
+1. Give the inventory tester `quantity: 250` and the store tester `storeName: Fresh Market`. Continue both journeys on the healthy app. Expect passing checks and separate account identities.
+2. For the next journey, choose store setup/profile editing for both testers. Use `Returning Craft Shop` and `Fresh Market Studio` as their respective store names. Expect the same account identities, one prior observation per tester, and successful saves. The stock preservation checks should expect 250 and 5 respectively.
+3. This successful execution can serve as a release baseline. A checkpoint comparison copies each tester's saved starting state, original inputs, assertions and recorded browser actions into a separate account. It makes **no model calls** and leaves the original accounts untouched.
+4. To demonstrate a history-dependent regression, stop the idle stack and restart with `SELLER_DEMO_DEFECT=reset-stock-on-store-save pnpm dev`. Compare against the healthy profile-update baseline. Expect the returning seller to fail stock preservation (250 expected, 5 observed) while the default-stock seller passes. The seller app labels this deliberately seeded defect.
+5. Stop the idle stack and restart with `pnpm dev` to restore healthy behavior. Compare against the **same original baseline**. Expect both checks to pass. This demonstrates independent rechecking, not an autonomous coding-agent repair.
+
+A replay that cannot reproduce the browser actions is inconclusive, not proof of a regression. Persistent comparisons use the population workflow; legacy replay/investigation endpoints are for fresh-session runs.
+
+Application context lists explicitly configured code and requirements with content digests, and is frozen with each release execution. It is a traceable source manifest, not automatic understanding of an arbitrary repository. Browser testers receive only their own latest visible observations, profile and task; they cannot read source code or the verifier's trusted state.
+
+## Generate the initial audience
 
 The connected app currently supports store setup and inventory updates. Domain text helps describe the audience; it does not automatically connect another application or add business features. The generator uses registered workflow outcomes and current browser observations. It cannot invent backend fields or upload fixtures.
 
@@ -40,7 +54,7 @@ The browser engine uses an independent Strands agent per tester. Each has its ow
 
 The verifier independently checks visible UI and authenticated persisted state against the registered outcome contract. Changing a tester's goal does not silently rewrite its outcome contract. Review both before launch. Language, familiarity and background are behavioral guidance, not verified simulation of real people; browser locale does not translate the app. Viewports are emulated, not physical devices.
 
-General application onboarding, richer starting-state/file integrations, evidence-backed repair proposals, patch approval, post-repair verification, optional voice input and AWS deployment are later checkpoints. No arbitrary external URL execution or autonomous application patches are enabled here.
+General application onboarding, automatic next-task proposals, richer file integrations, evidence-backed repair proposals, patch approval, genuine post-repair verification and AWS deployment are later checkpoints. No arbitrary external URL execution or autonomous application patches are enabled here.
 
 The earlier replay and controlled-comparison engines remain available for corroborating verified failures. Their historical runs and configuration are retained. Lower-level configuration is an advanced workflow; it is no longer the product's starting point.
 
@@ -60,4 +74,4 @@ The seller app visibly labels this condition and cancels store saves after 700 m
 
 Run targeted tests for changed components. `pnpm typecheck`, scoped eslint and both Next builds verify the integrated workspace. Playwright UI tests use intercepted or isolated no-model APIs; explicit live scripts use OpenAI. The browser-seller integration test requires the seller app running.
 
-SQLite databases are in `.data/`; evidence is in `artifacts/`. These, `.env`, project plans and local execution notes are ignored by Git. No production data migration, push, merge or deployment is implied. AWS deployment is the final planned stage after local acceptance.
+SQLite databases are in `.data/`; evidence is in `artifacts/`. These, `.env`, project plans and local execution notes are ignored by Git. No production data migration, push, merge or deployment is implied. AWS deployment is the final planned stage after local acceptance. AWS is for hosting only; no AWS AI or memory services are used.
