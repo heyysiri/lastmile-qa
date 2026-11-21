@@ -1,4 +1,4 @@
-# LastMile QA
+# lastmile qa.
 
 Persistent AI test users for applications in development. Connect your repository, running app and audience intent. LastMile reads relevant source, observes the UI, generates a test team and checks what actually persists. On later releases, it retains the team's identities, history and requirement-backed expectations.
 
@@ -18,8 +18,8 @@ Open [LastMile](http://127.0.0.1:3000). The runner defaults to port 4000. Stop a
 1. **New project → Connect a project:** provide its local repository path, running development URL and a plain-language description of the users and work to test. Add requirements and native development accounts where needed. The runner must be able to read that repository and reach the app.
 2. **Run test team:** the model generates tasks from source and observed UI. Separate browsers use the supplied accounts. Independent checks reopen pages and compare saved values or preserved state. Expand evidence to see expected versus observed results.
 3. **Test changes:** rebuild your application, then revisit it with the same team. Original checks stay frozen; additional coverage may be proposed. Changed requirements or implementation-derived assumptions can require fresh evidence.
-4. **Prepare fix:** a conclusive failed journey and a passing control are required. With build/start commands and a supported database snapshot configured, LastMile reproduces the recorded behavior in a private copy and asks the coding model for a source patch.
-5. **Verify patch:** review the proposed changes, then replay every frozen case and control against the private patched build. This replay makes zero model calls. A verified patch is ready for review and application in your checkout; LastMile does not automatically apply, merge or deploy it.
+4. **Automatic fix and verification:** when a run has a conclusive failure and a passing control, the runner reproduces the behavior privately, proposes a source patch, and replays the frozen cases without another click. Private verification needs the application build/start commands and any supported database snapshot configured at connection time. Replay makes zero model calls.
+5. **Review the result:** inspect expected versus observed values, the patch, and its verification outcome. Incomplete evidence or an unsupported setup is reported explicitly. Verified patches stay in private copies; they are not automatically applied, merged or deployed.
 
 Credentials and browser session state stay server-side. Account-bearing sessions suppress screenshots; redacted steps and check results remain available. Source-derived expectations are labeled separately from requirements. Synthetic testers provide software test coverage, not measured human behavior or proof of accessibility compliance.
 
@@ -45,6 +45,10 @@ flowchart LR
  H --> I[Reviewable verified fix]
 ```
 
-The Next.js dashboard proxies authenticated requests to the runner. SQLite stores projects and durable jobs. Strands runs bounded browser actors. Authentication and precondition capture can run concurrently; journeys that share business data run in a stable order, matching repair replay.
+The Next.js dashboard proxies authenticated requests to the runner. SQLite stores projects and durable jobs. Strands runs bounded browser actors. Authentication, precondition capture and browser journeys run serially against shared development data, matching repair replay and limiting memory use.
 
 The workspace focuses on Projects, with Results, Team and History tabs. Connection setup opens from **New project**. Earlier collection/editor screens redirect to Projects; saved study, population, run and repair evidence links remain available. Their [historical compatibility instructions](docs/legacy-workflows.md) describe different setup and verification contracts. AWS hosting is a later deployment step; no AWS intelligence service is required.
+
+## Use from a coding agent
+
+The local MCP server lets Claude Code or Codex connect projects, inspect generated personas, launch explore/release runs and follow automatic private repair without dashboard clicks. It reuses the same authenticated runner and durable jobs. See [MCP setup, exact prompts and verification](docs/MCP.md). The app and runner must already be running.
