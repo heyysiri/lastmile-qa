@@ -88,7 +88,7 @@ it('returns malformed plan errors to the model without corrupting the provider c
  expect(turns).toBe(2);
 });
 
-type PlanChange = 'role' | 'path' | 'hash' | 'excerpt' | 'unread' | 'unknown-citation' | 'account' | 'reuse' | 'route' | 'selector'
+type PlanChange = 'role' | 'path' | 'hash' | 'excerpt' | 'unread' | 'unknown-citation' | 'account' | 'reuse' | 'route' | 'selector' | 'route-selector'
   | 'basis' | 'identity' | 'multiple' | 'source-goal' | 'source-persona' | 'source-input' | 'oracle-goal' | 'oracle-input';
 
 async function setup(route: string, label: string, change?: PlanChange, entryText = '') {
@@ -134,7 +134,7 @@ async function setup(route: string, label: string, change?: PlanChange, entryTex
           role: 'Keeper', summary: change === 'source-persona' ? `Follow ${source.reference.path}.` : 'Records observations.', ...(project.accounts.length
             ? { accountId: change === 'account' ? 'outside' : accountId } : {}) };
         const locator = change === 'role' ? { by: 'role', value: 'checkbox', name: label }
-          : { by: 'label', value: change === 'selector' ? 'Unseen control' : label };
+          : { by: 'label', value: ['selector', 'route-selector'].includes(change ?? '') ? 'Unseen control' : label };
         const cited = ['path', 'hash', 'excerpt', 'unread'].includes(change ?? '') ? evidence
           : change === 'unknown-citation' ? 'S9999' : source.citation;
         const check = { id: 'saved', label: 'Saved reading', kind: 'field', locator, path: route, expected: '12.9',
@@ -143,7 +143,7 @@ async function setup(route: string, label: string, change?: PlanChange, entryTex
           goal: change === 'source-goal' ? `Record a reading based on this code:\n${source.reference.excerpt}`
             : change === 'oracle-goal' ? 'Record a reading. Preserve oracle: the other station remains 16.0.'
               : 'Record a tidal reading of 12.9.',
-          entryPath: change === 'route' ? '/invented' : route,
+          entryPath: ['route', 'route-selector'].includes(change ?? '') ? '/invented' : route,
           inputs: { reading: '12.9', ...(change === 'source-input' ? { notes: `Use ${source.reference.path}` } : {}),
             ...(change === 'oracle-input' ? { preserveExpected: '16.0' } : {}) },
           sources: [cited, requirement.citation],
@@ -313,6 +313,7 @@ describe('repository brain', () => {
   it.each([
     ['unknown-citation', /citation/i],
     ['account', /account/i], ['reuse', /account/i], ['route', /record.*route.*\/invented/i], ['selector', /saved.*locator.*Unseen control/i],
+    ['route-selector', /record.*route.*\/invented[\s\S]*saved.*locator.*Unseen control/i],
     ['basis', /basis/i], ['multiple', /one journey/i], ['role', /locator/i],
     ['source-goal', /actor.*source/i], ['source-persona', /actor.*source/i], ['source-input', /actor.*source/i],
     ['oracle-goal', /actor.*oracle/i], ['oracle-input', /actor.*oracle/i],

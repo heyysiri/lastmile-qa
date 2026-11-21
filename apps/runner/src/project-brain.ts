@@ -52,6 +52,7 @@ const systemPrompt = [
   'Each feature and journey cites repository evidence. Every check cites the evidence for its chosen basis: requirement (including $brief or $requirements), test, or implementation. Treat implementation-only expectations as hypotheses.',
   'Every sources array contains only returned citation IDs such as S1. Never reconstruct citation objects, hashes or excerpts. A check basis is requirement, test, or implementation, never a citation ID.',
   'Use visible, field, or text checks with exact observed role/name, label, text or source-backed test ID locators. Specify a readback route for after_reload and preserve. Use preserve for evidence of values that must remain unchanged.',
+  'Checks describe the completed task, not intermediate screens. Prefer stable form labels with the desired value in expected; do not invent a locator from a future heading or confuse a field value with its accessible name. Input keys are simple identifiers without spaces.',
   'Journeys run in the submitted order and can share application data across browser profiles and accounts. Preservation compares against the value frozen before any journey runs. Choose untouched controls and leave preserve.expected unset unless a requirement specifies a fixed value.',
   'For a release revisit earlier checks and explain coverage of changed files. Explain gaps when a role, route, control, or expectation cannot be corroborated.',
   'Use the available turns for a small executable plan. Once each tester has one viable task and a grounded check, call submit_plan and reserve turns for corrections. Explain remaining coverage as gaps.',
@@ -365,10 +366,8 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
       const kinds = new Map(index.files.map(({ path, kind }) => [path, kind]));
       validateActorContent(draft, allReferences, kinds);
       const repositoryBacked = (refs: SourceReference[]) => refs.some(ref => kinds.has(ref.path));
-      const unsupportedFeature = draft.features.find(feature => !repositoryBacked(feature.sources));
-      if (unsupportedFeature) {
-        throw new Error(`Feature ${unsupportedFeature.id} requires a repository citation. Cite a startupSources ID or read/search a repository file; $brief and $requirements alone do not establish an implemented feature.`);
-      }
+      const issues: string[] = draft.features.filter(feature => !repositoryBacked(feature.sources)).map(feature =>
+        `Feature ${feature.id} requires a repository citation. Cite a startupSources ID or read/search a repository file; $brief and $requirements alone do not establish an implemented feature.`);
       const gaps: string[] = [];
       if (!accounts.length) gaps.push('Testers are separate browser personas. No development accounts were supplied.');
       if (previous && changes === undefined) gaps.push('Previous source snapshot is unavailable. Changed-file coverage could not be attributed.');
@@ -383,11 +382,11 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
         const route = (path: string, sources: SourceReference[]) => {
           if (!routeSchema.safeParse(path).success || (!observed(path).length &&
               !sources.some(ref => kinds.has(ref.path) && routeIn(path, ref.excerpt)))) {
-            throw new Error(`Journey ${journey.id}: route ${path} requires a source citation or a matching browser observation for the assigned tester. Use observe_app to corroborate this route.`);
+            issues.push(`Journey ${journey.id}: route ${path} requires a source citation or a matching browser observation for the assigned tester. Use observe_app to corroborate this route.`);
           }
           unobservedRoutes ||= !observed(path).length;
         };
-        if (!repositoryBacked(journey.sources)) throw new Error('Each journey requires a repository citation');
+        if (!repositoryBacked(journey.sources)) issues.push(`Journey ${journey.id} requires a repository citation`);
         route(journey.entryPath, journey.sources);
         if (new Set(journey.checks.map(check => check.id)).size !== journey.checks.length) {
           throw new Error('Check IDs must be unique within the journey');
@@ -396,14 +395,14 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
           const sourcedKinds = check.sources.map(ref => brief.has(ref.path) ? 'requirement' : kinds.get(ref.path));
           const validBasis = check.basis === 'implementation' ? sourcedKinds.some(kind => kind === 'code' || kind === 'config')
             : sourcedKinds.includes(check.basis);
-          if (!validBasis) throw new Error('Check basis must match the type of its citations');
-          if (check.phase !== 'after_action' && !check.path) throw new Error('Reload and preserve checks require a readback route');
+          if (!validBasis) issues.push(`Check ${check.id}: basis must match the type of its citations`);
+          if (check.phase !== 'after_action' && !check.path) issues.push(`Check ${check.id}: reload and preserve checks require a readback route`);
           hypotheses ||= check.basis === 'implementation';
           const sources = [...journey.sources, ...check.sources];
           if (check.path) route(check.path, sources);
           const corroborated = observed(check.path ?? journey.entryPath).some(item => observedLocator(check, item.text));
           if (!corroborated && !sources.some(ref => kinds.has(ref.path) && sourcedLocator(check, ref.excerpt))) {
-            throw new Error(`Check ${check.id}: locator ${JSON.stringify(check.locator)} on ${check.path ?? journey.entryPath} requires a source citation or matching browser observation for the assigned tester.`);
+            issues.push(`Check ${check.id}: locator ${JSON.stringify(check.locator)} on ${check.path ?? journey.entryPath} requires a source citation or matching browser observation for the assigned tester.`);
           }
           unobservedLocators ||= !corroborated;
         }
@@ -417,7 +416,7 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
             if (phase === 'preserve') {
               const prior = priorOutputs.get(target);
               if (prior !== undefined && prior !== value) {
-                throw new Error('Guest journeys share a check target that an earlier journey plans to write. Preserve an untouched field or choose journeys with disjoint writes.');
+                issues.push(`Journey ${journey.id}: guest journeys share a check target that an earlier journey plans to write. Preserve an untouched field or choose journeys with disjoint writes.`);
               }
             } else if (value !== undefined && inputs.has(value)) {
               outputs.set(target, value);
@@ -426,6 +425,7 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
           for (const [target, value] of outputs) priorOutputs.set(target, value);
         }
       }
+      if (issues.length) throw new Error(issues.slice(0, 12).join('\n'));
       if (unobservedRoutes) gaps.push('Some routes are source-backed proposals without a browser observation for the assigned tester.');
       if (unobservedLocators) gaps.push('Some check locators are source-backed proposals awaiting browser corroboration.');
       if (hypotheses) gaps.push('Implementation-derived checks are hypotheses until independently supported.');
