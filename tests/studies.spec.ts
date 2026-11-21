@@ -110,7 +110,7 @@ async function mockStudyApi(page: Page, options: MockOptions = {}) {
 
 test('generates a study, saves new checks, and follows independent tester evidence after reload', async ({ page }) => {
   const mock = await mockStudyApi(page);
-  await page.goto('/');
+  await page.goto('/studies');
   await expect(page.getByRole('link', { name: study.title })).toBeVisible();
   await expect(page.getByText('Change the first product’s stock quantity.')).toBeVisible();
   await page.getByLabel('Domain').fill('Independent shops');
@@ -153,7 +153,7 @@ test('generates a study, saves new checks, and follows independent tester eviden
 
 test('keeps generation and launch idempotent across lost responses', async ({ page }) => {
   const mock = await mockStudyApi(page, { retryGenerate: true, retryLaunch: true });
-  await page.goto('/');
+  await page.goto('/studies');
   await page.getByRole('button', { name: 'Use example brief' }).click();
   await expect(page.getByLabel('Audience', { exact: true })).not.toHaveValue('');
   expect(mock.generateIds).toHaveLength(0);
@@ -199,13 +199,13 @@ test('preserves unsaved edits and blocks launch when a save conflicts', async ({
 
 test('shows offline and missing model states and disables generation', async ({ page, context }) => {
   await mockStudyApi(page, { catalogOffline: true });
-  await page.goto('/');
+  await page.goto('/studies');
   await expect(page.getByRole('main').getByRole('alert')).toContainText('Runner connection failed');
   await expect(page.getByRole('button', { name: 'Generate study' })).toBeDisabled();
 
   const missingModelPage = await context.newPage();
   await mockStudyApi(missingModelPage, { ready: false });
-  await missingModelPage.goto('/');
+  await missingModelPage.goto('/studies');
   await expect(missingModelPage.getByText(/model credentials/i)).toBeVisible();
   await expect(missingModelPage.getByRole('button', { name: 'Generate study' })).toBeDisabled();
 });
@@ -213,7 +213,7 @@ test('shows offline and missing model states and disables generation', async ({ 
 test('keeps generation failures actionable on a narrow screen with keyboard access', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });
   await mockStudyApi(page, { rejectGeneration: 'generation_failed' });
-  await page.goto('/');
+  await page.goto('/studies');
   const example = page.getByRole('button', { name: 'Use example brief' });
   await example.focus();
   await expect(example).toBeFocused();
@@ -229,7 +229,7 @@ test('keeps generation failures actionable on a narrow screen with keyboard acce
 for (const code of ['generation_failed', 'generation_interrupted'] as const) {
   test(`sends a new request after ${code}`, async ({ page }) => {
     const mock = await mockStudyApi(page, { rejectGeneration: code });
-    await page.goto('/');
+    await page.goto('/studies');
     await page.getByRole('button', { name: 'Use example brief' }).click();
     await page.getByRole('button', { name: 'Generate study' }).click();
     await expect(page.getByRole('main').getByRole('alert')).toContainText('Please give the audience more detail.');

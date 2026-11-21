@@ -27,7 +27,7 @@ export function MeasuredResults({ run, discovery = run?.discovery }: { run?: Pro
       </>}
       {run && <>
         <div><dt>Team run</dt><dd>{duration(run.metrics.elapsedMs)}</dd><dd>{plural(run.metrics.modelCalls, 'model call')}</dd><dd>{plural(run.metrics.browserActions, 'browser action')}</dd></div>
-        <div><dt>Checks</dt><dd>{run.metrics.passed} passed</dd><dd>{run.metrics.failed} failed</dd><dd>{run.metrics.inconclusive} inconclusive</dd></div>
+        <div><dt>Journeys</dt><dd>{run.metrics.passed} passed</dd><dd>{run.metrics.failed} failed</dd><dd>{run.metrics.inconclusive} inconclusive</dd></div>
       </>}
     </dl>
     <details className="project-disclosure">

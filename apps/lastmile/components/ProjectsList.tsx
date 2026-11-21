@@ -107,6 +107,7 @@ function ConnectProject({ ready, checkingHealth }: { ready: boolean; checkingHea
     const start = lines(data.get('start'));
     const cwd = field('cwd').trim();
     const databasePath = field('databasePath').trim();
+    const runtimeFiles = lines(data.get('runtimeFiles'));
     const input: ConnectProjectRequest = {
       requestId: pendingId ?? newRequestId(),
       name: field('name'), repositoryPath: field('repositoryPath').trim(),
@@ -115,8 +116,8 @@ function ConnectProject({ ready, checkingHealth }: { ready: boolean; checkingHea
       accounts: Array.from({ length: accountCount }, (_, index) => ({
         label: field(`label-${index}`), username: field(`username-${index}`), password: field(`password-${index}`),
       })),
-      commands: start.length || build.length || cwd || databasePath
-        ? { start, build: build.length ? build : undefined, cwd: cwd || undefined, databasePath: databasePath || undefined }
+      commands: start.length || build.length || cwd || databasePath || runtimeFiles.length
+        ? { start, build: build.length ? build : undefined, cwd: cwd || undefined, databasePath: databasePath || undefined, runtimeFiles:runtimeFiles.length?runtimeFiles:undefined }
         : undefined,
     };
     // Check URL syntax before the shared refinement constructs a URL.
@@ -195,6 +196,8 @@ function ConnectProject({ ready, checkingHealth }: { ready: boolean; checkingHea
               <label className="field"><span>Working directory (optional)</span><input name="cwd" placeholder="Repository-relative path" /></label>
               <label className="field"><span>Database path (optional)</span><input name="databasePath" placeholder="Repository-relative path" /></label>
             </div>
+            <label className="field"><span>Private runtime files (optional)</span><textarea name="runtimeFiles" className="short compact" placeholder="One repository-relative path per line" /></label>
+            <p className="field-hint">Files your app needs to start, such as local session configuration. Copied only into the private verification app, never sent to the coding model.</p>
           </div>
         </details>
       </fieldset>

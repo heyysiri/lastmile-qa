@@ -218,6 +218,7 @@ for (const width of [375, 1440]) {
     await expect(page.getByText(hash, { exact: true }).first()).toBeHidden();
     await page.getByText('Measured results', { exact: true }).click();
     await expect(page.getByText('12 source files')).toBeVisible();
+    await expect(page.locator('dt').filter({hasText:/^Journeys$/})).toBeVisible();
     await page.getByText('Tester history', { exact: true }).click();
     await expect(page.getByText('Observed Monday after reload.')).toBeVisible();
     await expect(page.getByRole('link', { name: 'View run results' })).toHaveAttribute('href', '/projects/desk/runs/run-1');
@@ -227,6 +228,16 @@ for (const width of [375, 1440]) {
     await expect(page.getByRole('heading', { name: finding.title })).toBeVisible();
   });
 }
+
+test('passes explicitly selected private runtime files with the repair commands',async({page})=>{
+ await mockApi(page);await page.goto('/');await fillConnection(page);
+ await page.getByText('Advanced connection setup',{exact:true}).click();
+ await page.getByLabel('Start command',{exact:true}).fill('node\nserver.js');
+ await page.getByLabel('Private runtime files (optional)',{exact:true}).fill('app/.data/credentials.json\napp/.data/settings.json');
+ const sent=page.waitForRequest(r=>r.method()==='POST'&&r.url().endsWith('/api/runner/projects'));
+ await page.getByRole('button',{name:'Connect project'}).click();await expect(page).toHaveURL(/\/projects\/desk$/);
+ expect((await sent).postDataJSON().commands.runtimeFiles).toEqual(['app/.data/credentials.json','app/.data/settings.json']);
+});
 
 test('recovers a lost connect response using only its request ID and no second write', async ({ page }) => {
   const mock = await mockApi(page);
