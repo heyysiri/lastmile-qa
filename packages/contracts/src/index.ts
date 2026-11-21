@@ -44,6 +44,17 @@ export const ScenarioSchema = z.object({
   investigation: z.object({ factors: z.array(z.enum(['viewport', 'locale', 'network', 'interaction', 'reducedMotion', 'inputs'])).default(['viewport']), maxAttempts: z.number().int().min(4).max(12).default(12) }).strict().default({ factors: ['viewport'], maxAttempts: 12 }),
 }).strict();
 export type ScenarioDefinition = z.infer<typeof ScenarioSchema>;
+export const NetworkProfileSchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('normal') }).strict(),
+  z.object({ mode: z.literal('request_delay'), delayMs: z.number().int().min(0).max(3000), pathPrefix: z.string().regex(/^\/(?!\/)[^\\]*$/) }).strict(),
+  // Chromium network-condition emulation (latency and bandwidth); not a carrier or packet-loss model.
+  z.object({
+    mode: z.literal('throttled'), latencyMs: z.number().int().min(0).max(3000),
+    downloadKbps: z.number().int().min(16).max(100_000), uploadKbps: z.number().int().min(16).max(100_000),
+  }).strict(),
+  z.object({ mode: z.literal('offline') }).strict(),
+]);
+export type NetworkProfile = z.infer<typeof NetworkProfileSchema>;
 export const ContextPackSchema = z.object({
   id, revision: z.number().int().positive().default(1), label: z.string().min(1).max(120),
   viewport: z.object({ width: z.number().int().min(320).max(2560), height: z.number().int().min(480).max(1600) }).strict(),
@@ -52,10 +63,7 @@ export const ContextPackSchema = z.object({
   knownTerms: z.array(z.string().max(100)).max(30).default([]),
   background: z.string().trim().min(1).max(2000).optional(),
   interaction: z.enum(['pointer', 'keyboard_only']), reducedMotion: z.enum(['no-preference', 'reduce']),
-  network: z.discriminatedUnion('mode', [
-    z.object({ mode: z.literal('normal') }).strict(),
-    z.object({ mode: z.literal('request_delay'), delayMs: z.number().int().min(0).max(3000), pathPrefix: z.string().regex(/^\/(?!\/)[^\\]*$/) }).strict(),
-  ]),
+  network: NetworkProfileSchema,
   inputs: z.record(id, InputValueSchema),
 }).strict();
 export type ContextPack = z.infer<typeof ContextPackSchema>;
@@ -105,6 +113,6 @@ export const capabilities = [
   { factor: 'familiarity', mode: 'guidance', description: 'Declared knowledge; behavioral simulation' },
   { factor: 'interaction', mode: 'enforced', description: 'Pointer or keyboard-only tools' },
   { factor: 'reducedMotion', mode: 'enforced', description: 'Browser reduced-motion preference' },
-  { factor: 'network', mode: 'enforced', description: 'Normal or injected request delay; not bandwidth shaping' },
+  { factor: 'network', mode: 'enforced', description: 'Normal, injected request delay, Chromium latency/bandwidth throttling or offline; not carrier, radio or packet-loss simulation' },
   { factor: 'inputs', mode: 'enforced', description: 'Typed values and approved fixture bindings' },
 ] as const;

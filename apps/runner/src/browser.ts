@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium, errors, type BrowserContext, type BrowserContextOptions, type Locator, type Page, type Request } from 'playwright';
-import { resolveExpected, type AppliedCapability, type ContextPack, type InputValue, type LocatorSpec, type StepEvent } from '@lastmile/contracts';
+import { NetworkProfileSchema, resolveExpected, type AppliedCapability, type ContextPack, type InputValue, type LocatorSpec, type NetworkProfile, type StepEvent } from '@lastmile/contracts';
 import { fieldNameLocator } from './field-locator';
 import { BrowserActionSchema, type BrowserAction, type RecordedAction } from '@lastmile/contracts/runtime';
 
@@ -16,8 +16,14 @@ type BrowserSessionOptions = {
   redactValues?: string[];
   artifactDirectory: string;
   signal: AbortSignal;
+  /** Remaining journey action budget (observations included), at most the default maximum. Zero or invalid is rejected. */
+  actionLimit?: number;
   onStep: (step: StepEvent) => void;
 };
+
+const MAX_ACTIONS = 40;
+// Chromium emulation takes bytes per second; the contract speaks kilobits per second.
+const BYTES_PER_KBPS = 125;
 
 export type BrowserSession = {
   page: Page;
@@ -25,6 +31,12 @@ export type BrowserSession = {
   observe(): Promise<string>;
   refreshObservation(): Promise<string>;
   inspectReplayPosition(): Promise<{url:string;focus:string}>;
+  /**
+   * Runtime-owned (never a model tool): replaces the active network profile. The initial pack profile is applied
+   * through the same path. Throws BrowserActionError for an invalid profile, a cancelled or closed session, a
+   * busy session, or a profile Chromium could not apply (the capability is then marked unsupported).
+   */
+  setConnectivity(profile: ContextPack['network']): Promise<void>;
   actions: RecordedAction[];
   capabilities: AppliedCapability[];
   networkEvents: unknown[];
@@ -139,6 +151,9 @@ function formatFieldMetadata(controls: FieldControl[], redact: (text: string) =>
 
 export async function createBrowserSession(options: BrowserSessionOptions): Promise<BrowserSession> {
   const { pack, inputs, artifactDirectory, signal, onStep } = options;
+  const actionLimit = options.actionLimit ?? MAX_ACTIONS;
+  if (!Number.isInteger(actionLimit) || actionLimit < 0 || actionLimit > MAX_ACTIONS) throw new BrowserActionError('Invalid browser action limit');
+  if (actionLimit === 0) throw new BrowserActionError('Browser action budget exhausted');
   const origin = new URL(options.origin).origin;
   const extraOrigins=(options.allowedOrigins??[]).map(value=>new URL(value).origin);
   const privateValues = (options.redactValues ?? []).filter(Boolean);
@@ -195,6 +210,12 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
 
     const actions: RecordedAction[] = [];
     const networkEvents: unknown[] = [];
+    // The active profile; every request-delay decision reads it, so a switch takes effect for the next request.
+    let profile: NetworkProfile = pack.network;
+    let matchedRequests = 0;
+    const emulation = (value: NetworkProfile) => value.mode === 'throttled'
+      ? { emulation: 'chromium_cdp_network_conditions', note: 'Latency and bandwidth emulation; not a carrier, radio or packet-loss model' }
+      : value.mode === 'offline' ? { emulation: 'chromium_context_offline' } : {};
     const network: AppliedCapability = {
       factor: 'network', status: pack.network.mode === 'normal' ? 'applied' : 'not_exercised',
       value: redactEvidence({ ...pack.network, matchedRequests: 0 }),
@@ -221,7 +242,6 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
       else void socket.close();
     });
     session.on('page', popup => { if (popup !== page) void popup.close().catch(() => {}); });
-    let matchedRequests = 0;
     const pending = new Set<Request>();
     session.on('request', request => pending.add(request));
     session.on('requestfinished', request => pending.delete(request));
@@ -236,13 +256,13 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
     });
 
     async function delayRequest(url: URL) {
-      const profile = pack.network;
-      if (profile.mode !== 'request_delay' || !url.pathname.startsWith(profile.pathPrefix)) return;
+      const active = profile;
+      if (active.mode !== 'request_delay' || !url.pathname.startsWith(active.pathPrefix)) return;
       const started = performance.now();
-      await delay(profile.delayMs, undefined, { signal: journeySignal });
+      await delay(active.delayMs, undefined, { signal: journeySignal });
       network.status = 'applied';
-      network.value = redactEvidence({ ...profile, matchedRequests: ++matchedRequests });
-      networkEvents.push({ kind: 'request_delay', url: redact(cleanUrl(url.href)), delayMs: profile.delayMs, elapsedMs: Math.round(performance.now() - started) });
+      network.value = redactEvidence({ ...active, matchedRequests: ++matchedRequests });
+      networkEvents.push({ kind: 'request_delay', url: redact(cleanUrl(url.href)), delayMs: active.delayMs, elapsedMs: Math.round(performance.now() - started) });
     }
 
     await session.route('**/*', async route => {
@@ -281,6 +301,46 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
       }
     });
     await cdp.send('Fetch.enable', { patterns: [{ requestStage: 'Response' }] });
+    await cdp.send('Network.enable');
+
+    // Playwright's context offline switch and the page's CDP throttle are independent emulations.
+    // Both are cleared first so no earlier mode can leak into the next one.
+    let emulationDirty = false;
+    async function applyProfile(next: NetworkProfile, initial = false) {
+      const emulated = (value: NetworkProfile) => value.mode === 'throttled' || value.mode === 'offline';
+      const previous = profile;
+      try {
+        if (emulationDirty || emulated(previous) || emulated(next)) {
+          await session.setOffline(false);
+          await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+          if (next.mode === 'offline') await session.setOffline(true);
+          if (next.mode === 'throttled') {
+            await cdp.send('Network.emulateNetworkConditions', {
+              offline: false, latency: next.latencyMs,
+              downloadThroughput: next.downloadKbps * BYTES_PER_KBPS, uploadThroughput: next.uploadKbps * BYTES_PER_KBPS,
+            });
+          }
+        }
+        emulationDirty = false;
+      } catch (error) {
+        emulationDirty = true;
+        network.status = 'unsupported';
+        network.value = redactEvidence({ ...next, matchedRequests: 0, error: 'Chromium could not apply this network profile' });
+        if (initial) throw error;
+        throw new BrowserActionError('Network profile could not be applied');
+      }
+      profile = next;
+      matchedRequests = 0;
+      network.status = next.mode === 'request_delay' ? 'not_exercised' : 'applied';
+      network.value = redactEvidence({ ...next, matchedRequests, ...emulation(next) });
+      if (!initial || next.mode !== 'normal') {
+        networkEvents.push({
+          kind: 'connectivity_change', from: previous.mode, to: next.mode, profile: redactEvidence(next),
+          ...(initial ? { initial: true } : {}), appliedAt: new Date().toISOString(),
+        });
+      }
+    }
+    await applyProfile(pack.network, true);
 
     let index = 0;
     let busy = false;
@@ -435,7 +495,7 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
       if (journeySignal.aborted) throw new BrowserActionError('Browser journey time limit reached');
       if (closing || page.isClosed()) throw new BrowserActionError('Browser session is closed');
       if (busy) throw new BrowserActionError('Browser tools must run sequentially');
-      if (index >= 40) throw new BrowserActionError('Browser action budget exhausted');
+      if (index >= actionLimit) throw new BrowserActionError('Browser action budget exhausted');
       const seq = ++index;
       const timestamp = new Date().toISOString();
       const end = Math.min(deadline, performance.now() + 5_000);
@@ -462,11 +522,13 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
             }
           }
           stepArguments = action;
-          before = await inspectReplayPosition();
+          // A navigation that failed (offline, blocked) leaves Chromium's own error page. It holds no application
+          // state, so the next action may start from it, as from a blank page.
+          before = page.url().startsWith('chrome-error:') ? { url: routeIdentity('about:blank'), focus: 'none' } : await inspectReplayPosition();
           await dispatch(action, timing());
         }
         // Give UI updates a brief window, extending it for pending delayed requests.
-        const settleUntil = Math.min(end - 400, performance.now() + (pack.network.mode === 'request_delay' ? pack.network.delayMs : 0) + 450);
+        const settleUntil = Math.min(end - 400, performance.now() + (profile.mode === 'request_delay' ? profile.delayMs : profile.mode === 'throttled' ? profile.latencyMs : 0) + 450);
         do {
           if (performance.now() + 100 > settleUntil) break;
           await delay(100, undefined, { signal: stepSignal });
@@ -514,9 +576,21 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
       }
     }
 
+    async function setConnectivity(requested: ContextPack['network']) {
+      const parsed = NetworkProfileSchema.safeParse(requested);
+      if (!parsed.success) throw new BrowserActionError('Invalid network profile');
+      if (signal.aborted) throw new BrowserActionError('Browser journey cancelled');
+      if (journeySignal.aborted) throw new BrowserActionError('Browser journey time limit reached');
+      if (closing || page.isClosed()) throw new BrowserActionError('Browser session is closed');
+      if (busy) throw new BrowserActionError('Browser tools must run sequentially');
+      busy = true;
+      try { await applyProfile(parsed.data); }
+      finally { busy = false; }
+    }
+
     return {
-      page, actions, capabilities, networkEvents, refreshObservation, inspectReplayPosition,
-      storageState:()=>session.storageState(),
+      page, actions, capabilities, networkEvents, refreshObservation, inspectReplayPosition, setConnectivity,
+      storageState:()=>session.storageState({ indexedDB: true }),
       observe: () => step(),
       execute: async action => {
         const parsed = BrowserActionSchema.safeParse(action);

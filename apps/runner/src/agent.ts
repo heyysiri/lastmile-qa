@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { BrowserActionSchema, type EvidenceRun } from '@lastmile/contracts/runtime';
 import { BrowserActionError, type BrowserSession } from './browser';
 
-const modelLimit = 20;
+const maxModelCalls = 20;
 const descriptions = {
   navigate: 'Open a relative, approved path in the application.',
   click: 'Click a unique visible control from the latest observation.',
@@ -25,13 +25,20 @@ function transient(error: unknown) {
 export async function runAgent(
   session: BrowserSession,
   run: EvidenceRun,
-  options?: { apiKey?: string; model?: string; signal?: AbortSignal },
+  options?: { apiKey?: string; model?: string; signal?: AbortSignal; modelCallLimit?: number },
 ): Promise<{ modelCalls: number; finished: boolean; reason: string }> {
   const caller = options?.signal;
   const wallClock = AbortSignal.timeout(180_000);
   const signal = caller ? AbortSignal.any([caller, wallClock]) : wallClock;
   const apiKey = options?.apiKey ?? process.env.OPENAI_API_KEY;
   let modelCalls = 0;
+  // The root supplies what remains of the journey budget. Zero or an invalid value stops; it never resets to the default.
+  const requested = options?.modelCallLimit;
+  const modelLimit = requested === undefined ? maxModelCalls : requested;
+  if (!Number.isInteger(modelLimit) || modelLimit < 0 || modelLimit > maxModelCalls) {
+    return { modelCalls, finished: false, reason: 'Agent model call budget is invalid' };
+  }
+  if (modelLimit === 0) return { modelCalls, finished: false, reason: 'Agent model call budget exhausted' };
   let finishStatus: 'done' | 'blocked' | undefined;
   let retried = false;
   let providerFailed = false;
