@@ -69,6 +69,10 @@ function candidate(path: string) {
   return { language, kind };
 }
 
+export function repositorySourceKind(path: string) {
+  return candidate(path)?.kind;
+}
+
 async function* walk(root: string, prefix = ''): AsyncGenerator<string> {
   const directory = resolve(root, prefix);
   if (await realpath(directory) !== directory) return;

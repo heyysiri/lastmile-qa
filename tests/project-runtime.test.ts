@@ -112,6 +112,24 @@ it('reports stale release citations on prior checks while still running changed 
  expect(released.results[3].checks[1]).toMatchObject({id:'stock',status:'passed'});
 },25000);
 
+it.each(['requirement','implementation'] as const)('handles %s-backed checks when supporting implementation changes',async basis=>{
+ const f=await fixture();f.setDefect(false);
+ await writeFile(join(f.root,'app.js'),'// original save implementation');
+ let index=await scanRepository(f.root);const implementation=await readRepositorySource(index,'app.js');
+ f.discovery.index={...index,fileCount:index.files.length};
+ for(const journey of f.discovery.plan.journeys)for(const check of journey.checks){check.sources.push(implementation);check.basis=basis;}
+ const runtime=createProjectRuntime({privateRoot:join(f.root,'.private'),artifactRoot:join(f.root,'.artifacts'),model:'test',discover:async()=>f.discovery,actor:saveName});
+ const baseline=await runtime.execute(f.project,{accounts:[]},f.run,[],()=>{});
+ expect(baseline.metrics.passed).toBe(2);
+ await writeFile(join(f.root,'app.js'),'// changed save implementation');f.setDefect(true);
+ index=await scanRepository(f.root);f.discovery.index={...index,fileCount:index.files.length};
+ f.discovery.plan.journeys=[];
+ const released=await runtime.execute(f.project,{accounts:[]},{...f.run,id:'release',request:{requestId:'release',mode:'release'}},[],()=>{},baseline);
+ expect(released.results[0].journey).toEqual(baseline.results[0].journey);
+ expect(released.results[0].checks[1]).toMatchObject(basis==='requirement'?{id:'stock',expected:'17',actual:'1',status:'failed'}:{id:'stock',expected:'17',status:'not_evaluated'});
+ expect(released.results[1].run.verdict).toBe(basis==='requirement'?'passed':'inconclusive');
+},25000);
+
 it('keeps prior release coverage available when refreshed discovery fails',async()=>{
  const f=await fixture();f.setDefect(false);
  const runtime=createProjectRuntime({privateRoot:join(f.root,'.private'),artifactRoot:join(f.root,'.artifacts'),model:'test',discover:async()=>{throw new Error('Discovery service unavailable');},actor:saveName});

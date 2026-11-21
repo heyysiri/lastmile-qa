@@ -7,7 +7,7 @@ import {createBrowserSession,routeIdentity,type BrowserSession} from './browser'
 import {runAgent} from './agent';
 import {hashValue,writeArtifactManifest} from './artifacts';
 import {classifyOutcome} from './outcome';
-import {scanRepository,sourceReference} from './repository-index';
+import {scanRepository,sourceReference,repositorySourceKind} from './repository-index';
 import {captureProjectChecks,verifyProjectChecks} from './project-verifier';
 import {createProjectSessions,projectActorRun} from './project-sessions';
 import {createRepositoryBrain} from './project-brain';
@@ -28,12 +28,12 @@ function currentSourceCheck(project:Project,index:RepositoryIndex){
  };
 }
 
-function releaseDiscovery(fresh:ProjectDiscovery,prior:ProjectTesterResult[],isCurrent:(ref:SourceReference)=>boolean):ProjectDiscovery {
+function releaseDiscovery(fresh:ProjectDiscovery,prior:ProjectTesterResult[],isCurrent:(check:ProjectCheck)=>boolean):ProjectDiscovery {
  const journeys=prior.map(r=>r.journey),testers=new Map(prior.map(r=>[r.tester.id,r.tester]));
  const ids=new Set(journeys.map(j=>j.id));
  // Ignore presentation and a prior run's captured value when comparing coverage.
  const coverage=({testerId,entryPath,goal,inputs,checks}:ProjectJourney)=>hashValue({testerId,entryPath,goal,inputs,checks:checks.map(({kind,locator,phase,path,expected})=>hashValue({kind,locator,phase,path,expected:phase==='preserve'?undefined:expected??(kind==='visible'?true:undefined)})).sort()});
- const covered=new Set(journeys.filter(j=>j.checks.every(c=>c.sources.every(isCurrent)&&(c.phase!=='preserve'||c.expected!==undefined))).map(coverage));
+ const covered=new Set(journeys.filter(j=>j.checks.every(c=>isCurrent(c)&&(c.phase!=='preserve'||c.expected!==undefined))).map(coverage));
  let omitted=0;
  for(const journey of fresh.plan.journeys){
   const key=coverage(journey);
@@ -152,6 +152,13 @@ export function createProjectRuntime(options:Options):ProjectRuntime&{replay:(pr
   const prior=input.request.mode==='release'?(previousRun?.results??[]):[];
   const privateValues=sessions.privateValues(secrets).filter(Boolean);
   const isCurrent=currentSourceCheck(project,index);
+  const currentCheck=(check:ProjectCheck)=>{
+   const basisSources=check.sources.filter(ref=>{
+    const kind=ref.path==='$brief'||ref.path==='$requirements'?'requirement':repositorySourceKind(ref.path);
+    return check.basis==='implementation'?kind==='code'||kind==='config':kind===check.basis;
+   });
+   return basisSources.length>0&&basisSources.every(isCurrent);
+  };
   if(prior.some(r=>r.journey.checks.some(c=>containsPrivateValue(c.expected,privateValues))))
    throw new Error('Prior coverage contains a private account value and cannot be published');
   let discovery=project.discovery;
@@ -168,7 +175,7 @@ export function createProjectRuntime(options:Options):ProjectRuntime&{replay:(pr
    }
   }
   if(index.version!==discovery.index.version)throw new Error('Source changed while the test team was prepared; run again after the edit completes');
-  if(prior.length)discovery=releaseDiscovery(discovery,prior,isCurrent);
+  if(prior.length)discovery=releaseDiscovery(discovery,prior,currentCheck);
   run.discovery=discovery;run.sourceVersion=discovery.index.version;
   run.phase='Freezing journey preconditions';onUpdate(structuredClone(run));
   const testers=new Map(discovery.plan.testers.map(t=>[t.id,t]));
@@ -182,7 +189,7 @@ export function createProjectRuntime(options:Options):ProjectRuntime&{replay:(pr
    const tester=testers.get(journey.testerId)!;
    const unavailable=new Map<string,string>();
    if(priorIds.has(journey.id))for(const check of journey.checks){
-    if(!check.sources.every(isCurrent))unavailable.set(check.id,'A prior check source citation is stale or missing');
+    if(!currentCheck(check))unavailable.set(check.id,'A prior check source citation is stale or missing');
     else if(check.phase==='preserve'&&check.expected===undefined)unavailable.set(check.id,'The prior run did not freeze a preserved value');
    }
    return prepareJourney(project,tester,journey,unavailable,authenticated.get(tester.id)===true,privateValues);
