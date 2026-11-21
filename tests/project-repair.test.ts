@@ -6,7 +6,7 @@ import type { Project, ProjectRepair, ProjectRun, ProjectTesterResult } from '..
 import { hashValue } from '../apps/runner/src/artifacts';
 import { createProjectRepairRuntime } from '../apps/runner/src/project-repair';
 import { hashBytes } from '../apps/runner/src/repair-workspace';
-import {sourceReference} from '../apps/runner/src/repository-index';
+import { scanRepository, sourceReference } from '../apps/runner/src/repository-index';
 
 const roots: string[] = [];
 const entry = 'packages/values/src.js';
@@ -179,6 +179,31 @@ it('builds and replays a frozen fix through a private workspace alias without to
   expect(await readFile(join(f.repositoryPath, originalDb), 'utf8')).toBe('live-db');
   expect(await readFile(join(f.snapshot, 'database.sqlite'), 'utf8')).toBe('before-run-db');
   expect(await readFile(join(f.snapshot, 'sessions/staff.json'), 'utf8')).toBe('before-run-session');
+});
+
+it('builds with indexed cache source and excludes unindexed cache files', async () => {
+  const f = await fixture();
+  const cacheSource = 'app/cache/prepare.js';
+  const scratchFile = 'app/cache/stale.bin';
+  await mkdir(join(f.repositoryPath, 'app/cache'));
+  await writeFile(join(f.repositoryPath, cacheSource), "module.exports = 'indexed';");
+  await writeFile(join(f.repositoryPath, scratchFile), 'runtime cache');
+  const buildPath = join(f.repositoryPath, 'app/build.js');
+  const build = await readFile(buildPath, 'utf8');
+  await writeFile(buildPath, `
+    if (require('./cache/prepare') !== 'indexed' || require('node:fs').existsSync('cache/stale.bin')) process.exit(13);
+    ${build}
+  `);
+  const { files, version } = await scanRepository(f.repositoryPath);
+  expect(files.map(file => file.path)).toContain(cacheSource);
+  f.job.sourceRun.sourceVersion = version;
+  await writeFile(join(f.snapshot, 'source-manifest.json'), JSON.stringify({
+    version, files: files.map(({ path, hash }) => ({ path, hash })),
+  }));
+
+  const job = await f.reviewed();
+  expect((await f.runtime.verify(job, secrets)).outcome).toBe('verified');
+  expect(await readFile(join(f.repositoryPath, scratchFile), 'utf8')).toBe('runtime cache');
 });
 
 it('accepts intact user requirement citations and rejects changed virtual excerpts',async()=>{

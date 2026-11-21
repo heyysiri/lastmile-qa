@@ -65,7 +65,7 @@ const inside = (root: string, path: string) => {
 
 const excludedNames = new Set([
   '.git', '.data', '.next', '.local-work', '.worktrees', '.cache', '.temp', '.tanstack',
-  'cache', '__pycache__', 'artifacts', 'test-results', 'playwright-report', 'coverage',
+  '__pycache__', 'artifacts', 'test-results', 'playwright-report', 'coverage',
 ]);
 const credentialName = /(?:^|[._-])(?:credentials?|secrets?|private[-_]?keys?|service[-_]?accounts?|id_rsa|id_ed25519|passwd|htpasswd)(?:[._-]|$)/i;
 const excludedName = (name: string) =>
@@ -153,18 +153,27 @@ async function inspectDependencies(root: string, path: string, bindings: Depende
   }
 }
 
-async function copyRepository(root: string, tree: string, excluded: string[], protectedPaths: Set<string>) {
+async function copyRepository(root: string, tree: string, excluded: string[], protectedPaths: Set<string>, manifest: Manifest) {
   const dependencies: DependencyBinding[] = [];
-  async function copy(directory: string) {
+  const indexedPaths = new Set<string>();
+  for (const { path } of manifest.files) {
+    for (let parent = path; parent !== '.' && !indexedPaths.has(parent); parent = dirname(parent)) {
+      indexedPaths.add(parent);
+    }
+  }
+  async function copy(directory: string, indexedOnly = false) {
     await mkdir(join(tree, directory), { mode: 0o700 });
     for (const entry of await readdir(join(root, directory), { withFileTypes: true })) {
       const path = join(directory, entry.name);
       const from = join(root, path);
-      if (excluded.includes(from) || protectedPaths.has(path) || excludedName(entry.name)) continue;
+      // A cache directory can contain both indexed application source and runtime files.
+      const restrictToIndexed = indexedOnly || entry.name === 'cache';
+      if (excluded.includes(from) || protectedPaths.has(path) || excludedName(entry.name)
+        || (restrictToIndexed && !indexedPaths.has(path))) continue;
       if (entry.name === 'node_modules' && (entry.isDirectory() || entry.isSymbolicLink())) {
         await inspectDependencies(root, path, dependencies);
       } else if (entry.isDirectory()) {
-        await copy(path);
+        await copy(path, restrictToIndexed);
       } else if (entry.isFile()) {
         await copyFile(from, join(tree, path), constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
       }
@@ -442,7 +451,7 @@ export function createProjectRepairRuntime(options: Options): ProjectRepairRunti
           for (const suffix of ['', '-wal', '-shm', '-journal']) protectedPaths.add(commands.databasePath + suffix);
         }
         const tree = join(pending, 'repository');
-        const dependencies = await copyRepository(root, tree, [base, privateRoot], protectedPaths);
+        const dependencies = await copyRepository(root, tree, [base, privateRoot], protectedPaths, manifest);
         await checkManifest(tree, manifest);
         const project = structuredClone(job.project);
         const source = structuredClone(job.sourceRun);
