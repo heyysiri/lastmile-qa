@@ -53,6 +53,7 @@ const systemPrompt = [
   'Every sources array contains only returned citation IDs such as S1. Never reconstruct citation objects, hashes or excerpts. A check basis is requirement, test, or implementation, never a citation ID.',
   'Use visible, field, or text checks with exact observed role/name, label, text or source-backed test ID locators. Specify a readback route for after_reload and preserve. Use preserve for evidence of values that must remain unchanged.',
   'Checks describe the completed task, not intermediate screens. Prefer stable form labels with the desired value in expected; do not invent a locator from a future heading or confuse a field value with its accessible name. Input keys are simple identifiers without spaces.',
+  'A fieldName observation is the exact HTML name of a visible form control. Use by: fieldName with that observed name when accessible labels are missing or ambiguous. Never infer a field name from a nearby label or source template.',
   'Journeys run in the submitted order and can share application data across browser profiles and accounts. Preservation compares against the value frozen before any journey runs. Choose untouched controls and leave preserve.expected unset unless a requirement specifies a fixed value.',
   'For a release revisit earlier checks and explain coverage of changed files. Explain gaps when a role, route, control, or expectation cannot be corroborated.',
   'Use the available turns for a small executable plan. Once each tester has one viable task and a grounded check, call submit_plan and reserve turns for corrections. Explain remaining coverage as gaps.',
@@ -129,6 +130,7 @@ function observedLocator(check: ProjectCheck, text: string) {
   if (by === 'testId') return false;
   const lines = text.split('\n').filter(line => /^\s*-\s/.test(line) && !line.includes('[aria-hidden]'));
   const quoted = (label: string) => escapeRegex(JSON.stringify(label));
+  if (by === 'fieldName') return lines.filter(line => new RegExp(`^\\s*- fieldName ${quoted(value)}(?=\\s|:|$)`).test(line)).length === 1;
   if (by === 'text') return lines.some(line => new RegExp(`(?:: |^\\s*- text: )${escapeRegex(value)}$`).test(line.trimEnd()) ||
     new RegExp(`^\\s*- [\\w-]+ ${quoted(value)}(?=\\s|:|$)`).test(line));
   const role = by === 'role' ? escapeRegex(value) : labelRoles;
@@ -139,6 +141,7 @@ function observedLocator(check: ProjectCheck, text: string) {
 
 function sourcedLocator(check: ProjectCheck, excerpt: string) {
   const { by, value, name } = check.locator;
+  if (by === 'fieldName') return false;
   if (by === 'testId') return new RegExp(`data-testid\\s*[:=]\\s*["']${escapeRegex(value)}["']`).test(excerpt);
   if (by === 'role' && !new RegExp(`\\b${escapeRegex(value)}\\b`, 'i').test(excerpt)) return false;
   const token = by === 'role' ? name : value;
@@ -155,7 +158,7 @@ function boundedObservation(text: string) {
   // Keep URLs with their link labels so the planner can connect routes to visible controls.
   const entries = text.replace(/\n[ \t]*- \/url: ([^\n]*)/g, (line, path) => routeSchema.safeParse(path).success ? line : '')
     .split(/\n(?![ \t]*- \/url: )/);
-  const fieldContext = new RegExp(`^\\s*- (?:${labelRoles}|main|form|heading)(?=\\s|:|$)`);
+  const fieldContext = new RegExp(`^\\s*- (?:${labelRoles}|fieldName|main|form|heading)(?=\\s|:|$)`);
   const actions = /^\s*- (?:button|link|menuitem|menuitemcheckbox|menuitemradio|tab|treeitem)(?=\s|:|$)/;
   const ranked = entries.map((entry, index) => ({ entry, index, priority:
     /^(?:URL|Focused): /.test(entry) || fieldContext.test(entry) ? 0 : actions.test(entry) ? 1 : 2,

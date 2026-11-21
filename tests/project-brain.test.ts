@@ -89,6 +89,7 @@ it('returns malformed plan errors to the model without corrupting the provider c
 });
 
 type PlanChange = 'role' | 'path' | 'hash' | 'excerpt' | 'unread' | 'unknown-citation' | 'account' | 'reuse' | 'route' | 'selector' | 'route-selector' | 'auto-observe'
+  | 'field-name' | 'field-name-duplicate' | 'field-name-unobserved'
   | 'basis' | 'identity' | 'multiple' | 'source-goal' | 'source-persona' | 'source-input' | 'oracle-goal' | 'oracle-input';
 
 async function setup(route: string, label: string, change?: PlanChange, entryText = '') {
@@ -97,7 +98,9 @@ async function setup(route: string, label: string, change?: PlanChange, entryTex
   const observe = vi.fn(async (_project: Project, _secrets: ProjectSecrets, paths: string[]) => paths
     .filter(path => path === route || path === new URL(project.appUrl).pathname).map(path => ({
     path, ...(project.accounts.length ? { accountId } : {}),
-    text: `- textbox "${label}"\n${username} ${password}${path === new URL(project.appUrl).pathname ? entryText : ''}`,
+    text: (change?.startsWith('field-name') ? '  - generic: navigation filler\n'.repeat(240)
+      + (change === 'field-name-unobserved' ? '' : '- fieldName "readings.current"\n'.repeat(change === 'field-name-duplicate' ? 2 : 1)) : '')
+      + `- textbox "${label}"\n${username} ${password}${path === new URL(project.appUrl).pathname ? entryText : ''}`,
     observedAt: now,
   })));
   let turn = 0;
@@ -134,7 +137,8 @@ async function setup(route: string, label: string, change?: PlanChange, entryTex
         const tester = { id: change === 'identity' ? 'replaced' : 'station', name: 'Station keeper',
           role: 'Keeper', summary: change === 'source-persona' ? `Follow ${source.reference.path}.` : 'Records observations.', ...(project.accounts.length
             ? { accountId: change === 'account' ? 'outside' : accountId } : {}) };
-        const locator = change === 'role' ? { by: 'role', value: 'checkbox', name: label }
+        const locator = change?.startsWith('field-name') ? { by: 'fieldName', value: 'readings.current' }
+          : change === 'role' ? { by: 'role', value: 'checkbox', name: label }
           : { by: 'label', value: ['selector', 'route-selector'].includes(change ?? '') ? 'Unseen control' : label };
         const cited = ['path', 'hash', 'excerpt', 'unread'].includes(change ?? '') ? evidence
           : change === 'unknown-citation' ? 'S9999' : source.citation;
@@ -173,6 +177,14 @@ async function setup(route: string, label: string, change?: PlanChange, entryTex
 }
 
 describe('repository brain', () => {
+  it('grounds exact field names in observed DOM metadata beyond a long sidebar', async () => {
+    const discovery = await (await setup('/chart-cabinet', 'High tide', 'field-name')).run();
+    expect(discovery.plan.journeys[0].checks[0].locator).toEqual({ by: 'fieldName', value: 'readings.current' });
+    expect(discovery.observations.every(observation => observation.text.length <= 5000)).toBe(true);
+  });
+  it.each(['field-name-duplicate', 'field-name-unobserved'] as const)('rejects %s metadata instead of guessing a field', async change => {
+    await expect((await setup('/chart-cabinet', 'High tide', change)).run()).rejects.toThrow(/locator/i);
+  });
   it('corroborates proposed journey and readback routes during submission without another model navigation request', async () => {
     const test = await setup('/chart-cabinet', 'High tide', 'auto-observe');
     const discovery = await test.run();
