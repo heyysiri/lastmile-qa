@@ -28,6 +28,12 @@ afterEach(async () => {
   await rm(fixture, { recursive: true, force: true });
 });
 
+const behavior = (background = 'Records field measurements carefully using keyboard navigation.') => ({
+  viewport: { width: 390, height: 844 }, locale: 'fr-FR', preferredLanguage: 'French', familiarity: 'first_time' as const,
+  knownTerms: ['tide'], background, interaction: 'keyboard_only' as const, reducedMotion: 'reduce' as const,
+  network: { mode: 'request_delay' as const, delayMs: 400, pathPrefix: '/' },
+});
+
 function call(turn: number, name: string, input: unknown) {
   return { choices: [{ index: 0, finish_reason: 'tool_calls', delta: { role: 'assistant', tool_calls: [
     { index: 0, id: `call_${turn}`, type: 'function', function: { name, arguments: JSON.stringify(input) } },
@@ -110,7 +116,9 @@ type PlanChange = 'role' | 'path' | 'hash' | 'excerpt' | 'unread' | 'unknown-cit
   | 'field-name' | 'field-name-duplicate' | 'field-name-unobserved' | 'unlinked-label' | 'missing-expected' | 'ambiguous-text'
   | 'basis' | 'identity' | 'multiple' | 'source-goal' | 'source-persona' | 'source-input' | 'oracle-goal' | 'oracle-input';
 
-async function setup(route: string, label: string, change?: PlanChange, entryText = '') {
+type DraftFixture = { testers: Array<{ id: string; name: string; role: string; summary: string; selectionReason?: string; accountId?: string; context: ReturnType<typeof behavior> }>; journeys: Array<{ id: string; testerId: string; goal: string; stages?: Array<{ id: string; label: string; goal: string; transition: string; entryPath?: string }>; checks: Array<{ id: string; atStageStart?: string }> }> };
+
+async function setup(route: string, label: string, change?: PlanChange, entryText = '', transform?: (plan: DraftFixture) => void) {
   await writeFile(join(fixture, 'station.py'), `from tides import station\nroute = "${route}"\nlabel = "${label}"\n`);
   await writeFile(join(fixture, 'unread.py'), 'protected = "Not looked up"\n');
   const observe = vi.fn(async (_project: Project, _secrets: ProjectSecrets, paths: string[]) => paths
@@ -154,7 +162,7 @@ async function setup(route: string, label: string, change?: PlanChange, entryTex
           Object.assign(evidence, await readRepositorySource(await scanRepository(fixture), 'unread.py'));
         }
         const tester = { id: change === 'identity' ? 'replaced' : 'station', name: 'Station keeper',
-          role: 'Keeper', summary: change === 'source-persona' ? `Follow ${source.reference.path}.` : 'Records observations.', ...(project.accounts.length
+          role: 'Keeper', context: behavior(), selectionReason: 'Covers field data entry with unfamiliar navigation.', summary: change === 'source-persona' ? `Follow ${source.reference.path}.` : 'Records observations.', ...(project.accounts.length
             ? { accountId: change === 'account' ? 'outside' : accountId } : {}) };
         const locator = change?.startsWith('field-name') ? { by: 'fieldName', value: 'readings.current' }
           : change === 'ambiguous-text' ? { by: 'text', value: label }
@@ -177,13 +185,15 @@ async function setup(route: string, label: string, change?: PlanChange, entryTex
           ...(['oracle-goal', 'oracle-input'].includes(change ?? '') ? [
             { ...check, id: 'other-station', phase: 'preserve', expected: '16.0' },
           ] : [])], reason: 'Record and read back a station measurement.' };
-        return call(turn, 'submit_plan', { plan: {
+        const plan = {
           summary: 'Station readings', features: [{ id: 'log', title: 'Reading log', description: 'Records readings.', sources: [cited] }],
-          roles: ['Keeper'], testers: change === 'reuse' ? [tester, { ...tester, id: 'second' }] : [tester],
+          roles: ['Keeper'], testers: change === 'reuse' ? [tester, { ...tester, id: 'second', name: 'Another keeper' }] : [tester],
           journeys: change === 'reuse' ? [journey, { ...journey, id: 'record2', testerId: 'second' }]
             : change === 'multiple' ? [journey, { ...journey, id: 'record2' }] : [journey],
           gaps: [],
-        } });
+        };
+        transform?.(plan);
+        return call(turn, 'submit_plan', { plan });
       }
       default:
         submissionResult = result;
@@ -197,6 +207,61 @@ async function setup(route: string, label: string, change?: PlanChange, entryTex
 }
 
 describe('repository brain', () => {
+  it('preserves four relevant behavioral profiles sharing one account', async () => {
+    const test = await setup('/chart-cabinet', 'High tide', undefined, '', plan => {
+      const tester = plan.testers[0], journey = plan.journeys[0];
+      plan.testers = ['Learns navigation before entry.', 'Reviews measurements twice.', 'Works quickly with familiar labels.', 'Returns to unfinished measurements.'].map((background, i) => ({
+        ...tester, id: `person${i}`, context: behavior(background),
+      }));
+      plan.journeys = plan.testers.map(t => ({ ...journey, id: `journey${t.id}`, testerId: t.id }));
+    });
+    const result = await test.run();
+    expect(result.plan.testers).toHaveLength(4);
+    expect(result.plan.testers[0].context).toEqual({ ...behavior('Learns navigation before entry.'), id: 'person0', revision: 1, label: 'Station keeper', inputs: {} });
+  });
+
+  it('accepts several journeys for one persona', async () => {
+    expect((await (await setup('/chart-cabinet', 'High tide', 'multiple')).run()).plan.journeys).toHaveLength(2);
+  });
+
+  it.each(['valid', 'unknown', 'source', 'oracle', 'background-source', 'background-oracle'] as const)('validates %s stage entry checks and actor goals', async mode => {
+    const test = await setup('/chart-cabinet', 'High tide', undefined, '', plan => {
+      if (mode === 'background-source') plan.testers[0].context.background = 'Read station.py first.';
+      if (mode === 'background-oracle') plan.testers[0].context.background = 'Independent check: expected reading is 12.9.';
+      plan.journeys[0].stages = [{ id: 'return', label: 'Return', transition: 'reopen', entryPath: '/chart-cabinet',
+        goal: mode === 'source' ? 'Read station.py before acting.' : mode === 'oracle' ? 'Independent check: expected reading is 12.9.' : 'Review the saved reading.' }];
+      plan.journeys[0].checks[0].atStageStart = mode === 'unknown' ? 'missing' : 'return';
+    });
+    if (mode === 'valid') expect((await test.run()).plan.journeys[0].checks[0].atStageStart).toBe('return');
+    else await expect(test.run()).rejects.toThrow(mode === 'unknown' ? /unknown stage/i : /actor.*(?:source|oracle)/i);
+  });
+
+  it.each(['background', 'selectionReason'] as const)('requires useful %s on newly generated personas', async field => {
+    const test = await setup('/chart-cabinet', 'High tide', undefined, '', plan => {
+      if (field === 'background') delete (plan.testers[0].context as { background?: string }).background;
+      else delete plan.testers[0].selectionReason;
+    });
+    await expect(test.run()).rejects.toThrow(/background|selectionReason|submitted plan/);
+  });
+
+  it('retains legacy contexts without inventing a new behavioral background', async () => {
+    const first = await (await setup('/chart-cabinet', 'High tide')).run();
+    delete first.plan.testers[0].context.background;
+    delete first.plan.testers[0].selectionReason;
+    const next = await setup('/chart-cabinet', 'High tide', undefined, '', plan => {
+      delete (plan.testers[0].context as { background?: string }).background;
+      delete plan.testers[0].selectionReason;
+    });
+    expect((await next.run(first)).plan.testers[0].context).toEqual(first.plan.testers[0].context);
+  });
+
+  it('rejects changed prior behavior and supplies prior contexts to the planner', async () => {
+    const first = await (await setup('/chart-cabinet', 'High tide')).run();
+    const second = await setup('/chart-cabinet', 'High tide', undefined, '', plan => { plan.testers[0].context.background = 'Rushes through unfamiliar labels.'; });
+    await expect(second.run(first)).rejects.toThrow(/previous.*context/i);
+    expect(second.prompt()).toContain('Records field measurements carefully');
+  });
+
   it('does not treat nearby label text or source markup as an accessible label absent from the observed page', async () => {
     await expect((await setup('/chart-cabinet', 'High tide', 'unlinked-label')).run()).rejects.toThrow(/locator/i);
   });
@@ -215,16 +280,19 @@ describe('repository brain', () => {
     expect(discovery.observations).toEqual(expect.arrayContaining([expect.objectContaining({ path: '/chart-cabinet', accountId })]));
   });
   it.each([
-    { scenario: 'a conflicting guest check', control: 'Station name', expected: 'East station', accounts: false, rejects: true },
-    { scenario: 'an uncaptured conflicting guest check', control: 'Station name', expected: undefined, accounts: false, rejects: true },
-    { scenario: 'a guest check on an untouched field', control: 'Calibration', expected: '10', accounts: false, rejects: false },
-    { scenario: 'the same control under distinct accounts', control: 'Station name', expected: 'East station', accounts: true, rejects: false },
-  ])('handles $scenario when a prior journey plans a write', async ({ control, expected, accounts, rejects }) => {
+    { scenario: 'a conflicting guest check', control: 'Station name', expected: 'East station', accounts: false, reuse: false, entryRead: false, rejects: true },
+    { scenario: 'an uncaptured conflicting guest check', control: 'Station name', expected: undefined, accounts: false, reuse: false, entryRead: false, rejects: true },
+    { scenario: 'a guest check on an untouched field', control: 'Calibration', expected: '10', accounts: false, reuse: false, entryRead: false, rejects: false },
+    { scenario: 'the same control under distinct accounts', control: 'Station name', expected: 'East station', accounts: true, reuse: false, entryRead: false, rejects: false },
+    { scenario: 'a stage-entry read on a shared account', control: 'Station name', expected: undefined, accounts: true, reuse: true, entryRead: true, rejects: false },
+    { scenario: 'a conflicting reused account check', control: 'Station name', expected: undefined, accounts: true, reuse: true, entryRead: false, rejects: true },
+    { scenario: 'an untouched reused account check', control: 'Calibration', expected: '10', accounts: true, reuse: true, entryRead: false, rejects: false },
+  ])('handles $scenario when a prior journey plans a write', async ({ control, expected, accounts, reuse, entryRead, rejects }) => {
     const path = '/station';
     await writeFile(join(fixture, 'station.py'), 'route = "/station"\nname = "Station name"\ncalibration = "Calibration"\nthreshold = "Alarm threshold"\n');
     project.accounts = accounts ? [{ id: 'editor', label: 'Editor' }, { id: 'operator', label: 'Operator' }] : [];
     const testers = ['editor', 'operator'].map(id => ({
-      id, name: id, role: 'Staff', summary: 'Maintains station settings.', ...(accounts ? { accountId: id } : {}),
+      id, name: id, role: 'Staff', summary: 'Maintains station settings.', context: behavior(id === 'editor' ? 'Reviews station identity before saving.' : 'Adjusts alarms using familiar controls.'), selectionReason: 'Covers station settings.', ...(accounts ? { accountId: reuse ? 'editor' : id } : {}),
     }));
     let turn = 0;
     const complete = async (request: unknown) => {
@@ -238,7 +306,9 @@ describe('repository brain', () => {
       });
       const journeys = [
         { id: 'rename', testerId: 'editor', title: 'Rename the station', goal: 'Save a new station name.', entryPath: path,
-          inputs: { name: 'East Annex' }, checks: [field('saved-name', 'Saved station name', 'Station name', 'after_reload', 'East Annex')],
+          inputs: { name: 'East Annex' },
+          ...(entryRead ? { stages: [{ id: 'return', label: 'Return', goal: 'Review station settings.', transition: 'reopen' }] } : {}),
+          checks: [{ ...field('saved-name', 'Saved station name', 'Station name', 'after_reload', 'East Annex'), ...(entryRead ? { atStageStart: 'return' } : {}) }],
           reason: 'Staff can update station names.', sources },
         { id: 'adjust', testerId: 'operator', title: 'Adjust the alarm', goal: 'Save a new alarm threshold.', entryPath: path,
           inputs: { threshold: '6' }, checks: [field('saved-threshold', 'Saved threshold', 'Alarm threshold', 'after_reload', '6'),
@@ -247,11 +317,14 @@ describe('repository brain', () => {
       return call(turn, 'submit_plan', { plan: { summary: 'Station settings', roles: ['Staff'], testers, journeys, gaps: [],
         features: [{ id: 'settings', title: 'Station settings', description: 'Update station settings.', sources }] } });
     };
-    const result = createRepositoryBrain({ model: 'test', complete })(project, { accounts: [] }, () => {});
+    const observe = async () => [{ path, text: '- textbox "Station name"\n- textbox "Calibration"\n- textbox "Alarm threshold"', observedAt: now }];
+    const result = createRepositoryBrain({ model: 'test', complete, observe })(project, { accounts: [] }, () => {});
     if (rejects) {
       await expect(result).rejects.toThrow(/journeys share.*preserve an untouched field/i);
     } else {
-      expect((await result).plan.journeys[1].checks[1]).toMatchObject({ phase: 'preserve', expected });
+      const check = (await result).plan.journeys[1].checks[1];
+      expect(check.phase).toBe('preserve');
+      expect(check.expected).toBe(expected);
     }
   });
 
@@ -354,11 +427,11 @@ describe('repository brain', () => {
 
   it.each([
     ['unknown-citation', /citation/i],
-    ['account', /account/i], ['reuse', /account/i], ['route', /record.*route.*\/invented/i], ['selector', /saved.*locator.*Unseen control/i],
+    ['account', /account/i], ['reuse', /duplicate.*behavior/i], ['route', /record.*route.*\/invented/i], ['selector', /saved.*locator.*Unseen control/i],
     ['route-selector', /record.*route.*\/invented[\s\S]*saved.*locator.*Unseen control/i],
     ['missing-expected', /journeys\.0\.checks\.0.*expected value/i],
     ['ambiguous-text', /locator/i],
-    ['basis', /basis/i], ['multiple', /one journey/i], ['role', /locator/i],
+    ['basis', /basis/i], ['role', /locator/i],
     ['source-goal', /actor.*source/i], ['source-persona', /actor.*source/i], ['source-input', /actor.*source/i],
     ['oracle-goal', /actor.*oracle/i], ['oracle-input', /actor.*oracle/i],
   ] as const)('rejects %s without accepting a plan', async (change, reason) => {

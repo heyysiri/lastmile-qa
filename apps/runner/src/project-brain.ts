@@ -5,7 +5,9 @@ import { dirname, join } from 'node:path';
 import { Agent, BeforeModelCallEvent, ModelError, tool, type StreamOptions } from '@strands-agents/sdk';
 import { OpenAIModel } from '@strands-agents/sdk/models/openai';
 import { z } from 'zod';
+import { ContextPackSchema } from '@lastmile/contracts';
 import {
+  MAX_PROJECT_TESTERS, MAX_PROJECT_JOURNEYS,
   ProjectCheckSchema, ProjectJourneySchema, ProjectPlanSchema, ProjectTesterSchema,
   type DiscoverProject, type Project, type ProjectCheck,
   type ProjectDiscovery, type ProjectObservation, type ProjectPlan, type ProjectSecrets, type RepositoryIndex,
@@ -29,19 +31,21 @@ const discoveryMs = 120_000;
 const routeLimit = 12;
 const sourceToolLimit = 20;
 const citations = (max: number) => z.array(z.string().regex(/^S[1-9]\d*$/)).min(1).max(max);
+const draftContextSchema = ContextPackSchema.partial({ id: true, revision: true, label: true, inputs: true });
 const submissionSchema = z.strictObject({
   ...ProjectPlanSchema.shape,
   features: z.array(z.strictObject({ ...ProjectPlanSchema.shape.features.element.shape, sources: citations(8) })).min(1).max(20),
-  testers: z.array(ProjectTesterSchema.omit({ context: true })).min(1).max(3),
+  testers: z.array(ProjectTesterSchema.extend({ context: draftContextSchema,
+    selectionReason: z.string().trim().min(1).max(1000).optional() })).min(1).max(MAX_PROJECT_TESTERS),
   journeys: z.array(z.strictObject({
     ...ProjectJourneySchema.shape,
     sources: citations(10),
     checks: z.array(z.strictObject({ ...ProjectCheckSchema.shape,
-      phase: ProjectCheckSchema.shape.phase.describe('after_action runs once after ALL journey actions finish, on the final page. after_reload independently reopens path. preserve compares a frozen before-run value. Prefer durable saved values, never a transient toast after a journey that navigates away.'),
+      phase: ProjectCheckSchema.shape.phase.describe('With atStageStart, run after the named transition and before actor actions. Otherwise after_action runs once after ALL journey actions finish, on the final page. after_reload independently reopens path. preserve compares a frozen before-run value. Prefer durable saved values, never a transient toast after a journey that navigates away.'),
       sources: citations(5) })).min(1).max(12),
-  })).min(1).max(6),
+  })).min(1).max(MAX_PROJECT_JOURNEYS),
 });
-type PlanDraft = Omit<ProjectPlan, 'testers'> & { testers: Omit<ProjectPlan['testers'][number], 'context'>[] };
+type PlanDraft = ProjectPlan;
 
 const systemPrompt = [
   'Discover executable user journeys in a local development application using repository source and ordinary browser UI.',
@@ -49,14 +53,18 @@ const systemPrompt = [
   'Search for specific feature names and visible control labels from the brief and entry observations. Avoid generic route searches and reading through whole files in sections. Use citation IDs supplied in the prompt or returned by source tools.',
   'Start from the supplied entry observations and startup file hints. In monorepos, follow the startup files and their imports to identify the UI that actually runs before searching for its routes, controls and tests.',
   'Use observe_app on routes from source or visible links. Keep the full application path, including any configured mount prefix, and use the actual observed path when writing the plan. Observe the controls each persona will use. Never call private interfaces or test endpoints.',
-  'Submit up to three distinct testers and exactly one journey per tester. Bind each tester to a distinct supplied public account ID if accounts are available. Otherwise describe independent browser personas. Retain prior tester IDs and bindings.',
+  `Select 1..${MAX_PROJECT_TESTERS} nonduplicative evidence-relevant behavioral personas and 1..${MAX_PROJECT_JOURNEYS} journeys. Every persona needs at least one journey; several journeys per persona are useful when scope warrants them. Prefer 3-6 personas for substantial scope, but one is valid for narrow scope. Do not fill quotas or use a fixed persona catalog.`,
+  'Distinguish permission roles from behavior. Several personas may bind the same supplied public account ID; they share business data, not new permissions. Guest personas require guest browser observations. Missing access remains an explicit gap. Retain prior tester IDs, roles, account bindings and complete contexts.',
+  'Explain each selectionReason from requirements, source and observed UI. Choose meaningful context: familiarity, knownTerms, useful behavioral background, preferredLanguage/locale, viewport, interaction, reducedMotion and network. These choices reach the actor/browser; do not substitute a universal desktop English experienced default. Context id/revision/label/inputs may be omitted for normalization; supply the behavioral fields. New profiles require selectionReason and background; preserve legacy profiles exactly even when those fields were absent.',
+  'Use optional stages (at most four) only for meaningful situations grounded in this app and brief: work, leave, return or connectivity recovery. Each has id, label, goal, transition continue/reopen, optional entryPath, pauseMs 0..5000 and network. Runtime applies transitions/network; never ask the actor to toggle connectivity. Reopen restores persisted browser storage, not in-memory state. Do not claim elapsed days or human fidelity. Unsaved draft persistence is not a universal requirement.',
+  'Keep ALL checks in journey.checks. For return/resume state, prefer check.atStageStart naming the stage: it runs AFTER transition and BEFORE actor action, preventing retyping from faking persistence. Unmarked checks run at final journey end. Stage goals and behavioral background must not contain expected oracle values, citations or source instructions.',
   'Use small, fixed input values and user-facing goals. Keep source, success oracles and credentials out of tester descriptions and goals.',
   'The actor can fill or select only a supplied input slot exactly. Filling replaces the whole field; it cannot concatenate, interpolate, or append slot values. Supply the complete desired value for every editable field, not a prefix, suffix, or instruction to transform it. Keep lookup values in separate slots when needed.',
   'Each feature and journey cites repository evidence. Every check cites the evidence for its chosen basis: requirement (including $brief or $requirements), test, or implementation. Treat implementation-only expectations as hypotheses.',
   'Every sources array contains only returned citation IDs such as S1. Never reconstruct citation objects, hashes or excerpts. A check basis is requirement, test, or implementation, never a citation ID.',
   'Use visible, field, or text checks with exact observed role/name, label, text or source-backed test ID locators. Specify a readback route for after_reload and preserve. Use preserve for evidence of values that must remain unchanged.',
-  'Checks describe the completed task, not intermediate screens. Prefer stable form labels with the desired value in expected; do not invent a locator from a future heading or confuse a field value with its accessible name. Input keys are simple identifiers without spaces.',
-  'after_action is evaluated once after ALL actor actions, on the final page. Do not require transient success banners or notifications that disappear on navigation or reload. The verifier handles persistence readbacks; prefer durable fields and state over confirmations.',
+  'Checks describe the completed task or an explicitly marked stage entry. Prefer stable form labels with the desired value in expected; do not invent a locator from a future heading or confuse a field value with its accessible name. Input keys are simple identifiers without spaces.',
+  'Unmarked after_action is evaluated once after ALL actor actions, on the final page. Do not require transient success banners or notifications that disappear on navigation or reload. The verifier handles persistence readbacks; prefer durable fields and state over confirmations.',
   'A fieldName observation is the exact HTML name of a visible form control. Use by: fieldName with that observed name when accessible labels are missing or ambiguous. Never infer a field name from a nearby label or source template.',
   'Journeys run in the submitted order and can share application data across browser profiles and accounts. Preservation compares against the value frozen before any journey runs. Choose untouched controls and leave preserve.expected unset unless a requirement specifies a fixed value.',
   'For a release revisit earlier checks and explain coverage of changed files. Explain gaps when a role, route, control, or expectation cannot be corroborated.',
@@ -212,8 +220,8 @@ function compactManifest(index: RepositoryIndex, commands: Project['commands']) 
 }
 
 function previousHints(previous?: ProjectDiscovery) {
-  return previous?.plan.testers.map(({ id, role, accountId }) => ({
-    id, role, accountId,
+  return previous?.plan.testers.map(({ id, role, accountId, context, summary, selectionReason }) => ({
+    id, role, accountId, context, summary, selectionReason,
     journeys: previous.plan.journeys.filter(journey => journey.testerId === id)
       .map(({ entryPath, title, checks }) => ({ entryPath, title, checks: checks.slice(0, 6).map(({ label, phase, path }) => ({
         label, phase, path,
@@ -222,29 +230,36 @@ function previousHints(previous?: ProjectDiscovery) {
 }
 
 function validateAccounts(draft: PlanDraft, accounts: Project['accounts'], previous?: ProjectDiscovery) {
-  const bindings = new Set<string>();
+  const profiles = new Set<string>();
   for (const tester of draft.testers) {
-    if (accounts.length ? !accounts.some(account => account.id === tester.accountId) : tester.accountId !== undefined) {
+    if (!previous?.plan.testers.some(old => old.id === tester.id) && (!tester.selectionReason || !tester.context.background)) {
+      throw new Error('New personas require selectionReason and useful behavioral context.background');
+    }
+    if (tester.accountId !== undefined && !accounts.some(account => account.id === tester.accountId)) {
       throw new Error('Tester account must match supplied public account metadata');
     }
-    if (tester.accountId) {
-      if (bindings.has(tester.accountId)) throw new Error('A tester account cannot be reused by another tester');
-      bindings.add(tester.accountId);
-    }
-    if (draft.journeys.filter(journey => journey.testerId === tester.id).length !== 1) {
-      throw new Error('Generate exactly one journey per tester');
-    }
+    const { familiarity, knownTerms, background, viewport, locale, preferredLanguage, interaction, reducedMotion, network } = tester.context;
+    const profile = hashValue({ accountId: tester.accountId, familiarity, knownTerms: [...knownTerms].sort(), background,
+      viewport, locale, preferredLanguage, interaction, reducedMotion, network });
+    if (profiles.has(profile)) throw new Error('Duplicate persona behavior profiles; names alone do not add coverage');
+    profiles.add(profile);
+    if (!draft.journeys.some(journey => journey.testerId === tester.id)) throw new Error('Every tester needs a journey');
   }
-  if (previous?.plan.testers.some(old => !draft.testers.some(tester => tester.id === old.id && tester.accountId === old.accountId))) {
-    throw new Error('Preserve previous tester identities and account bindings');
+  for (const old of previous?.plan.testers ?? []) {
+    const tester = draft.testers.find(tester => tester.id === old.id && tester.accountId === old.accountId);
+    if (!tester) throw new Error('Preserve previous tester identities and account bindings');
+    if (tester.role !== old.role || hashValue(tester.context) !== hashValue(old.context)) {
+      throw new Error('Preserve previous tester roles and contexts');
+    }
   }
 }
 
 function validateActorContent(draft: PlanDraft, references: SourceReference[], kinds: Map<string, RepositoryIndex['files'][number]['kind']>) {
   const normalized = (text: string) => text.replace(/\s+/g, ' ').trim();
   const actorContent = [
-    ...draft.testers.flatMap(({ name, role, summary }) => [name, role, summary]),
-    ...draft.journeys.flatMap(({ goal, inputs }) => [goal, ...Object.keys(inputs), ...Object.values(inputs).map(String)]),
+    ...draft.testers.flatMap(({ name, role, summary, context }) => [name, role, summary, context.background ?? '',
+      context.label, context.locale, context.preferredLanguage, ...context.knownTerms, ...Object.keys(context.inputs), ...Object.values(context.inputs).map(String)]),
+    ...draft.journeys.flatMap(({ goal, inputs, stages }) => [goal, ...(stages ?? []).flatMap(stage => [stage.label, stage.goal]), ...Object.keys(inputs), ...Object.values(inputs).map(String)]),
   ].map(normalized);
   for (const { path, excerpt } of references) {
     const pathToken = new RegExp(`(?<![\\w./-])${escapeRegex(path)}(?![\\w/-]|\\.[\\w])`);
@@ -351,6 +366,10 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
       });
       return {
         ...draft,
+        testers: draft.testers.map(tester => ({ ...tester, context: ContextPackSchema.parse({
+          ...tester.context, id: tester.context.id ?? tester.id, revision: tester.context.revision ?? 1,
+          label: tester.context.label ?? tester.name, inputs: tester.context.inputs ?? {},
+        }) })),
         features: draft.features.map(feature => ({ ...feature, sources: resolve(feature.sources) })),
         journeys: draft.journeys.map(journey => ({
           ...journey,
@@ -375,10 +394,14 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
       const kinds = new Map(index.files.map(({ path, kind }) => [path, kind]));
       validateActorContent(draft, allReferences, kinds);
       const proposedRoutes = [...new Set(draft.journeys.flatMap(journey => [journey.entryPath,
+        ...(journey.stages ?? []).flatMap(stage => stage.entryPath ? [stage.entryPath] : []),
         ...journey.checks.flatMap(check => check.path ? [check.path] : [])]))]
         .filter(path => !visited.has(path) && routeSchema.safeParse(path).success && redact(path) === path)
         .slice(0, routeLimit - visited.size);
       if (proposedRoutes.length) await captureObservations(proposedRoutes);
+      if (draft.testers.some(tester => !tester.accountId) && !observations.some(item => !item.accountId)) {
+        throw new Error('Guest personas require guest browser observations; report missing access as a gap');
+      }
       const repositoryBacked = (refs: SourceReference[]) => refs.some(ref => kinds.has(ref.path));
       const issues: string[] = draft.features.filter(feature => !repositoryBacked(feature.sources)).map(feature =>
         `Feature ${feature.id} requires a repository citation. Cite a startupSources ID or read/search a repository file; $brief and $requirements alone do not establish an implemented feature.`);
@@ -402,6 +425,7 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
         };
         if (!repositoryBacked(journey.sources)) issues.push(`Journey ${journey.id} requires a repository citation`);
         route(journey.entryPath, journey.sources);
+        for (const stage of journey.stages ?? []) if (stage.entryPath) route(stage.entryPath, journey.sources);
         if (new Set(journey.checks.map(check => check.id)).size !== journey.checks.length) {
           throw new Error('Check IDs must be unique within the journey');
         }
@@ -414,7 +438,8 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
           hypotheses ||= check.basis === 'implementation';
           const sources = [...journey.sources, ...check.sources];
           if (check.path) route(check.path, sources);
-          const pageObservations = observed(check.path ?? journey.entryPath);
+          const stagePath = journey.stages?.find(stage => stage.id === check.atStageStart)?.entryPath;
+          const pageObservations = observed(check.path ?? stagePath ?? journey.entryPath);
           const corroborated = pageObservations.some(item => observedLocatorMatches(check, item.text) === 1);
           const ambiguous = pageObservations.some(item => observedLocatorMatches(check, item.text) > 1);
           const missingObservedLabel = check.locator.by === 'label' && pageObservations.length > 0;
@@ -423,19 +448,19 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
           }
           unobservedLocators ||= !corroborated;
         }
-        if (!accounts.length) {
+        {
           const inputs = new Set(Object.values(journey.inputs).map(String));
           const outputs = new Map<string, string>();
-          for (const { phase, kind, path, locator, expected } of journey.checks) {
+          for (const { phase, kind, path, locator, expected, atStageStart } of journey.checks) {
             if (phase === 'after_action' || kind === 'visible' || path === undefined) continue;
-            const target = hashValue({ path, kind, locator });
+            const target = hashValue({ principal: accountId ?? null, path, kind, locator });
             const value = expected === undefined ? undefined : String(expected);
             if (phase === 'preserve') {
               const prior = priorOutputs.get(target);
               if (prior !== undefined && prior !== value) {
-                issues.push(`Journey ${journey.id}: guest journeys share a check target that an earlier journey plans to write. Preserve an untouched field or choose journeys with disjoint writes.`);
+                issues.push(`Journey ${journey.id}: journeys share a check target that an earlier journey plans to write. Preserve an untouched field or choose journeys with disjoint writes.`);
               }
-            } else if (value !== undefined && inputs.has(value)) {
+            } else if (!atStageStart && value !== undefined && inputs.has(value)) {
               outputs.set(target, value);
             }
           }
@@ -448,14 +473,6 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
       if (hypotheses) gaps.push('Implementation-derived checks are hypotheses until independently supported.');
       return ProjectPlanSchema.parse({
         ...draft, gaps: boundedGaps(draft.gaps, gaps),
-        testers: draft.testers.map(tester => ({
-          ...tester,
-          context: {
-            id: tester.id, revision: 1, label: tester.name, viewport: { width: 1280, height: 900 }, locale: 'en-US',
-            preferredLanguage: 'English', familiarity: tester.accountId ? 'experienced' : 'first_time',
-            interaction: 'pointer', reducedMotion: 'no-preference', network: { mode: 'normal' }, knownTerms: [], inputs: {},
-          },
-        })),
       });
     }
 
@@ -530,7 +547,7 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
         },
       }),
       tool({
-        name: 'submit_plan', description: 'Submit source-backed features, roles, one journey per tester, UI checks, and gaps.',
+        name: 'submit_plan', description: 'Submit source-backed features, roles, behavioral personas, situation journeys, UI checks, and gaps.',
         inputSchema: z.strictObject({ plan: submissionSchema }),
         callback: async ({ plan }) => {
           if (signal.aborted || accepted) return 'Discovery already ended';
