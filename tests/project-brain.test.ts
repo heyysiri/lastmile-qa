@@ -38,11 +38,16 @@ function completion() {
   return { choices: [{ index: 0, finish_reason: 'stop', delta: { role: 'assistant', content: 'Done' } }] };
 }
 
-async function setup(route: string, label: string, change?: 'role' | 'path' | 'hash' | 'excerpt' | 'unread' | 'account' | 'reuse' | 'route' | 'selector' | 'basis' | 'identity' | 'multiple') {
+type PlanChange = 'role' | 'path' | 'hash' | 'excerpt' | 'unread' | 'account' | 'reuse' | 'route' | 'selector'
+  | 'basis' | 'identity' | 'multiple' | 'source-goal' | 'source-persona' | 'source-input' | 'oracle-goal' | 'oracle-input';
+
+async function setup(route: string, label: string, change?: PlanChange, entryText = '') {
   await writeFile(join(fixture, 'station.py'), `from tides import station\nroute = "${route}"\nlabel = "${label}"\n`);
   await writeFile(join(fixture, 'unread.py'), 'protected = "Not looked up"\n');
   const observe = vi.fn(async (_project: Project, _secrets: ProjectSecrets, paths: string[]) => paths.map(path => ({
-    path, ...(project.accounts.length ? { accountId } : {}), text: `- textbox "${label}"\n${username} ${password}`, observedAt: now,
+    path, ...(project.accounts.length ? { accountId } : {}),
+    text: `- textbox "${label}"\n${username} ${password}${path === new URL(project.appUrl).pathname ? entryText : ''}`,
+    observedAt: now,
   })));
   let turn = 0;
   let source: { citation: string; reference: SourceReference };
@@ -76,17 +81,26 @@ async function setup(route: string, label: string, change?: 'role' | 'path' | 'h
           Object.assign(evidence, await readRepositorySource(await scanRepository(fixture), 'unread.py'));
         }
         const tester = { id: change === 'identity' ? 'replaced' : 'station', name: 'Station keeper',
-          role: 'Keeper', summary: 'Records observations.', ...(project.accounts.length
+          role: 'Keeper', summary: change === 'source-persona' ? `Follow ${source.reference.path}.` : 'Records observations.', ...(project.accounts.length
             ? { accountId: change === 'account' ? 'outside' : accountId } : {}) };
         const locator = change === 'role' ? { by: 'role', value: 'checkbox', name: label }
           : { by: 'label', value: change === 'selector' ? 'Unseen control' : label };
         const cited = ['path', 'hash', 'excerpt', 'unread'].includes(change ?? '') ? evidence : source.citation;
         const check = { id: 'saved', label: 'Saved reading', kind: 'field', locator, path: route, expected: '12.9',
           phase: 'after_reload', basis: change === 'basis' ? 'test' : 'requirement', sources: [requirement.citation] };
-        const journey = { id: 'record', testerId: tester.id, title: 'Log a tide', goal: 'Record a tidal reading.',
-          entryPath: change === 'route' ? '/invented' : route, inputs: { reading: '12.9' }, sources: [cited, requirement.citation],
+        const journey = { id: 'record', testerId: tester.id, title: 'Log a tide',
+          goal: change === 'source-goal' ? `Record a reading based on this code:\n${source.reference.excerpt}`
+            : change === 'oracle-goal' ? 'Record a reading. Preserve oracle: the other station remains 16.0.'
+              : 'Record a tidal reading of 12.9.',
+          entryPath: change === 'route' ? '/invented' : route,
+          inputs: { reading: '12.9', ...(change === 'source-input' ? { notes: `Use ${source.reference.path}` } : {}),
+            ...(change === 'oracle-input' ? { preserveExpected: '16.0' } : {}) },
+          sources: [cited, requirement.citation],
           checks: [check, { ...check, id: 'reachable', kind: 'visible', phase: 'after_action', basis: 'implementation',
-            sources: [source.citation], expected: undefined }], reason: 'Record and read back a station measurement.' };
+            sources: [source.citation], expected: undefined },
+          ...(['oracle-goal', 'oracle-input'].includes(change ?? '') ? [
+            { ...check, id: 'other-station', phase: 'preserve', expected: '16.0' },
+          ] : [])], reason: 'Record and read back a station measurement.' };
         return call(turn, 'submit_plan', { plan: {
           summary: 'Station readings', features: [{ id: 'log', title: 'Reading log', description: 'Records readings.', sources: [cited] }],
           roles: ['Keeper'], testers: change === 'reuse' ? [tester, { ...tester, id: 'second' }] : [tester],
@@ -107,6 +121,51 @@ async function setup(route: string, label: string, change?: 'role' | 'path' | 'h
 }
 
 describe('repository brain', () => {
+  it('grounds the first model turn in the configured entry and startup files', async () => {
+    project.appUrl += '/workspace/';
+    project.commands = { cwd: 'runtime', start: ['python', 'server.py'] };
+    for (let i = 0; i < 35; i++) {
+      await mkdir(join(fixture, 'archive', String(i)), { recursive: true });
+      await writeFile(join(fixture, 'archive', String(i), 'routes.py'), 'route = "/archived"\n');
+    }
+    await mkdir(join(fixture, 'runtime'));
+    await writeFile(join(fixture, 'runtime', 'server.py'), 'from tides import station\n');
+    const test = await setup('/workspace/', 'Active station');
+    const discovery = await test.run();
+
+    const messages = JSON.parse(test.prompt()) as { role: string; content: { text: string }[] }[];
+    const prompt = JSON.parse(messages.find(message => message.role === 'user')!.content[0].text);
+    expect(prompt.observations).toEqual([
+      expect.objectContaining({ path: '/workspace/', accountId, text: expect.stringContaining('Active station') }),
+    ]);
+    expect(prompt.manifest.entryHints[0]).toMatchObject({ path: 'runtime/server.py' });
+    expect(test.observe.mock.calls.map(([, , paths]) => paths)).toEqual([['/workspace/']]);
+    expect(discovery.observations).toEqual(prompt.observations);
+  });
+
+  it('observes a mounted UI route backed by a relative source route', async () => {
+    project.appUrl += '/workspace/';
+    const test = await setup('/workspace/chart-cabinet', 'High tide');
+    await writeFile(join(fixture, 'station.py'), 'route = "/chart-cabinet"\nlabel = "High tide"\n');
+
+    const discovery = await test.run();
+
+    expect(discovery.observations.map(({ path }) => path)).toEqual(['/workspace/', '/workspace/chart-cabinet']);
+    expect(discovery.plan.journeys[0].entryPath).toBe('/workspace/chart-cabinet');
+  });
+
+  it('can observe a visible link beyond the entry snapshot cutoff', async () => {
+    project.appUrl += '/workspace/';
+    const test = await setup('/workspace/inspect/17', 'High tide', undefined,
+      `\n${'  - text: Reading summary\n'.repeat(200)}  - link "Inspect reading":\n    - /url: /workspace/inspect/17`);
+    await writeFile(join(fixture, 'station.py'), 'label = "High tide"\n');
+
+    const discovery = await test.run();
+
+    expect(discovery.observations.map(({ path }) => path)).toEqual(['/workspace/', '/workspace/inspect/17']);
+    expect(discovery.observations[0].text.length).toBeLessThanOrEqual(5000);
+  });
+
   it.each([['/chart-cabinet', 'High tide'], ['/survey-locker', 'Water level']])(
     'discovers an arbitrary %s route and distinguishes requirement from implementation', async (route, label) => {
       const test = await setup(route, label);
@@ -131,6 +190,8 @@ describe('repository brain', () => {
     ['path', /citation/i], ['hash', /citation/i], ['excerpt', /citation/i], ['unread', /citation/i],
     ['account', /account/i], ['reuse', /account/i], ['route', /route/i], ['selector', /locator/i],
     ['basis', /basis/i], ['multiple', /one journey/i], ['role', /locator/i],
+    ['source-goal', /actor.*source/i], ['source-persona', /actor.*source/i], ['source-input', /actor.*source/i],
+    ['oracle-goal', /actor.*oracle/i], ['oracle-input', /actor.*oracle/i],
   ] as const)('rejects %s without accepting a plan', async (change, reason) => {
     const test = await setup('/chart-cabinet', 'High tide', change);
     await expect(test.run()).rejects.toThrow(reason);
@@ -173,6 +234,29 @@ describe('repository brain', () => {
     await expect(createRepositoryBrain({ model: 'mock-brain', complete })(project, secrets, () => {}))
       .rejects.toThrow(/without a submitted plan/);
     expect(ranked.map(ref => ref.path)).toEqual(['runtime/view.py', 'archive/view.py']);
+  });
+
+  it('finds matching routes in a workspace imported by the startup before other workspaces', async () => {
+    project.commands = { cwd: 'runtime', start: ['node', 'start.mjs'] };
+    await mkdir(join(fixture, 'runtime'));
+    await mkdir(join(fixture, 'packages/active-ui'), { recursive: true });
+    await mkdir(join(fixture, 'archive'));
+    await writeFile(join(fixture, 'runtime/start.mjs'), 'import { start } from "@test/active/browser";\n');
+    await writeFile(join(fixture, 'packages/active-ui/package.json'), '{"name":"@test/active"}');
+    await writeFile(join(fixture, 'packages/active-ui/panel.ts'), 'export const route = "/routes";\n');
+    await Promise.all(Array.from({ length: 21 }, (_, i) => writeFile(join(fixture, 'archive', `routes-${i}.ts`),
+      'export const routes = "/routes";\n')));
+
+    let firstPath: string | undefined;
+    const complete = vi.fn(async (request: unknown) => {
+      if (complete.mock.calls.length === 1) return call(1, 'search_source', { query: 'routes', limit: 1 });
+      const { messages } = request as { messages: { content: string }[] };
+      firstPath = JSON.parse(messages.at(-1)!.content)[0]?.reference.path;
+      return completion();
+    });
+    await expect(createRepositoryBrain({ model: 'mock-brain', complete })(project, secrets, () => {}))
+      .rejects.toThrow(/without a submitted plan/);
+    expect(firstPath).toBe('packages/active-ui/panel.ts');
   });
 
   it('stops provider errors after one call and reports a sanitized failure', async () => {

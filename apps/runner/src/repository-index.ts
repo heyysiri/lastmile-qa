@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat, open, readdir, realpath } from 'node:fs/promises';
-import { extname, join, resolve, sep } from 'node:path';
+import { extname, join, posix, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import ts from 'typescript';
 import type { RepositoryIndex, SourceFile, SourceReference } from '@lastmile/contracts/projects';
@@ -32,6 +32,25 @@ const generatedContent = /(?:^|\n)\s*(?:[/#*;!-]+\s*)?(?:@generated\b|code gener
 const git = promisify(execFile);
 const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 const contentByIndex = new WeakMap<RepositoryIndex, Map<string, string>>();
+
+export function startupWorkspaces(index: RepositoryIndex, cwd?: string) {
+  const packageNames = new Set(index.files
+    .filter(file => file.kind === 'code' && posix.dirname(file.path) === (cwd ?? '.'))
+    .flatMap(file => file.imports.map(name => name.split('/').slice(0, name.startsWith('@') ? 2 : 1).join('/'))));
+  const workspaces: string[] = [];
+  for (const { path } of index.files) {
+    if (!path.endsWith('/package.json')) continue;
+    const content = contentByIndex.get(index)?.get(path);
+    if (!content) continue;
+    try {
+      const manifest = JSON.parse(content);
+      if (packageNames.has(manifest?.name)) workspaces.push(posix.dirname(path));
+    } catch {
+      // Non-JSON package manifests cannot establish a workspace identity.
+    }
+  }
+  return workspaces;
+}
 
 function candidate(path: string) {
   const parts = path.split('/');
@@ -224,13 +243,14 @@ function words(text: string) {
   return text.replace(/([a-z\d])([A-Z])/g, '$1 $2').toLowerCase().match(/[a-z0-9]+/g) ?? [];
 }
 
-export async function searchRepository(index: RepositoryIndex, query: string, limit = 8): Promise<SourceReference[]> {
+export async function searchRepository(index: RepositoryIndex, query: string, limit = 8,
+  relevance: (path: string) => number = () => 0): Promise<SourceReference[]> {
   const bounded = Number.isFinite(limit) ? Math.min(20, Math.floor(limit)) : 0;
   const terms = [...new Set(words(query.slice(0, 300)).filter(term => !stopWords.has(term)))].slice(0, 16);
   if (bounded < 1 || !terms.length) return [];
   const pattern = new RegExp(`\\b(?:${terms.join('|')})\\b`, 'g');
   const count = (text: string) => new Set((words(text.slice(0, maxExcerpt)).join(' ').match(pattern) ?? [])).size;
-  const hits: { file: SourceFile; line: number; score: number }[] = [];
+  const hits: { file: SourceFile; line: number; score: number; relevance: number }[] = [];
   const cached = contentByIndex.get(index);
   for (const file of index.files) {
     const content = cached?.get(file.path) ?? await indexedContent(index, file).catch(() => '');
@@ -249,9 +269,9 @@ export async function searchRepository(index: RepositoryIndex, query: string, li
     const symbols = file.symbols.join(' ');
     const covered = count([file.path, lines[line], symbols].join(' '));
     const score = best * 4 + count(file.path) * 3 + count(symbols) * 2;
-    if (covered >= Math.ceil(terms.length / 2)) hits.push({ file, line, score });
+    if (covered >= Math.ceil(terms.length / 2)) hits.push({ file, line, score, relevance: relevance(file.path) });
   }
-  hits.sort((a, b) => b.score - a.score);
+  hits.sort((a, b) => b.relevance - a.relevance || b.score - a.score);
   const results: SourceReference[] = [];
   for (const { file, line } of hits) {
     const content = await indexedContent(index, file).catch(() => null);
