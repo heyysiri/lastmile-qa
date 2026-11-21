@@ -6,6 +6,7 @@ import type { Project, ProjectRepair, ProjectRun, ProjectTesterResult } from '..
 import { hashValue } from '../apps/runner/src/artifacts';
 import { createProjectRepairRuntime } from '../apps/runner/src/project-repair';
 import { hashBytes } from '../apps/runner/src/repair-workspace';
+import {sourceReference} from '../apps/runner/src/repository-index';
 
 const roots: string[] = [];
 const entry = 'packages/values/src.js';
@@ -178,6 +179,21 @@ it('builds and replays a frozen fix through a private workspace alias without to
   expect(await readFile(join(f.repositoryPath, originalDb), 'utf8')).toBe('live-db');
   expect(await readFile(join(f.snapshot, 'database.sqlite'), 'utf8')).toBe('before-run-db');
   expect(await readFile(join(f.snapshot, 'sessions/staff.json'), 'utf8')).toBe('before-run-session');
+});
+
+it('accepts intact user requirement citations and rejects changed virtual excerpts',async()=>{
+ const f=await fixture();const ref=sourceReference('$requirements',hashValue(f.job.project.requirements),f.job.project.requirements);
+ for(const result of f.job.sourceRun.results){result.checks[0].sources.push(ref);result.journey.checks[0].sources.push(ref);}
+ const job=await f.reviewed();expect((await f.runtime.verify(job,secrets)).outcome).toBe('verified');
+ const other=await fixture();other.job.sourceRun.results[0].journey.sources.push({...ref,excerpt:'Invented requirement'});
+ expect((await other.runtime.prepare(other.job,secrets)).error).toMatch(/citation|stale/i);
+});
+
+it('accepts numeric expectations verified through textual UI readback without changing the frozen expected value',async()=>{
+ const f=await fixture();const originalReplay=f.replay.getMockImplementation()!;
+ f.job.sourceRun.results[1].checks[0].expected=7;f.job.sourceRun.results[1].checks[0].actual='7';f.job.sourceRun.results[1].journey.checks[0].expected=7;
+ f.replay.mockImplementation(async(...args)=>{const result=await originalReplay(...args);result.results[1].checks[0].actual='7';result.results[1].checks[0].status='passed';result.results[1].run.verdict='passed';return result;});
+ const job=await f.reviewed();expect((await f.runtime.verify(job,secrets)).outcome).toBe('verified');
 });
 
 it.each([

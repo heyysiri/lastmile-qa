@@ -12,6 +12,7 @@ import {
 } from '@lastmile/contracts/projects';
 import { hashValue } from './artifacts';
 import { applyRepairPatch, copyFrozenSource, createRepairPatch, hashBytes, hashSourceTree, readSourceText } from './repair-workspace';
+import {sourceReference} from './repository-index';
 
 type Options = {
   workspaceRoot: string;
@@ -99,7 +100,7 @@ async function checkManifest(root: string, manifest: Manifest) {
   }
 }
 
-async function checkCitations(tree: string, source: ProjectRun, manifest: Manifest) {
+async function checkCitations(tree: string, source: ProjectRun, manifest: Manifest, project:Project) {
   const hashes = new Map(manifest.files.map(file => [file.path, file.hash]));
   const relevant = [
     ...source.findings.flatMap(finding => finding.sources),
@@ -108,7 +109,11 @@ async function checkCitations(tree: string, source: ProjectRun, manifest: Manife
       ...result.checks.flatMap(check => check.sources), ...(result.finding?.sources ?? []),
     ]),
   ];
-  if (relevant.some(ref => hashes.get(ref.path) !== ref.hash)) throw new RepairError('A frozen source citation is stale or missing');
+  if (relevant.some(ref => {
+    const content=ref.path==='$brief'?project.brief:ref.path==='$requirements'?project.requirements:undefined;
+    if(content===undefined)return hashes.get(ref.path)!==ref.hash;
+    try{return !same(ref,sourceReference(ref.path,hashValue(content),content,ref.startLine,ref.endLine));}catch{return true;}
+  })) throw new RepairError('A frozen source citation is stale or missing');
 
   const failing = source.results.filter(result => result.checks.some(check => check.status === 'failed'));
   const refs = [
@@ -230,8 +235,10 @@ function replayChecks(source: ProjectRun, replay: ProjectRun) {
     return original.checks.map(before => {
       const after = result.checks.find(check => check.id === before.id)!;
       const identity = ({ id, expected, label, phase, basis, sources }: typeof before) => ({ id, expected, label, phase, basis, sources });
+      const checkKind=original.journey.checks.find(check=>check.id===before.id)!.kind;
+      const expectedActual=checkKind==='visible'?after.expected:String(after.expected);
       if (!same(identity(before), identity(after))
-        || (after.status === 'passed' && after.expected !== undefined && !same(after.actual, after.expected))) {
+        || (after.status === 'passed' && after.expected !== undefined && !same(after.actual, expectedActual))) {
         throw new RepairError('Replay changed a frozen check expectation or returned an inconsistent outcome');
       }
       return { before, after };
@@ -344,7 +351,7 @@ export function createProjectRepairRuntime(options: Options): ProjectRepairRunti
       await copyFrozenSource(join(snapshot, 'repository'), tree, signal);
       await checkManifest(tree, manifest);
       if (patch) {
-        const policy = await checkCitations(tree, source, manifest);
+        const policy = await checkCitations(tree, source, manifest,project);
         await applyRepairPatch({ tree, policy, patch });
       }
       const sessions = join(trial, 'sessions');
@@ -439,7 +446,7 @@ export function createProjectRepairRuntime(options: Options): ProjectRepairRunti
         await checkManifest(tree, manifest);
         const project = structuredClone(job.project);
         const source = structuredClone(job.sourceRun);
-        const policy = await checkCitations(tree, source, manifest);
+        const policy = await checkCitations(tree, source, manifest,project);
         const sessions = join(pending, 'sessions');
         await copyFrozenSource(join(snapshot, 'sessions'), sessions, new AbortController().signal);
         if (database) await writeFile(join(pending, 'database.sqlite'), database, { mode: 0o600 });
