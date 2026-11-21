@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type {ContinuityEvidence} from './populations';
 import { LocatorSchema, type RunRecord } from './index';
 
 export const ValueRefSchema = z.union([
@@ -22,7 +23,7 @@ export type ExecutionEvidence = {
   actions: RecordedAction[]; modelCalls: number; finishedByAgent: boolean;
   replayHash?: string; replayCompatible?: boolean;
 };
-export type EvidenceRun = RunRecord & { evidence?: ExecutionEvidence; expectedBuildId?:string; replay?:ReplayPlan; artifactManifestHash?:string };
+export type EvidenceRun = RunRecord & { evidence?: ExecutionEvidence; expectedBuildId?:string; replay?:ReplayPlan; artifactManifestHash?:string; continuity?:ContinuityEvidence };
 export type InvestigationFactor = 'viewport' | 'locale' | 'network' | 'interaction' | 'reducedMotion' | 'inputs';
 export type InvestigationTrial = { role: 'target' | 'control' | 'candidate'; factor?: InvestigationFactor; repeat: number; run: EvidenceRun };
 export type DifferentialResult = {
