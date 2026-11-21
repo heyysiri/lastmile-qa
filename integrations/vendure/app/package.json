@@ -1,0 +1,13 @@
+{
+  "name": "vendure-local-marketplace",
+  "private": true,
+  "engines": { "node": "22.x" },
+  "scripts": {
+    "build:packages": "npm --prefix .. run build -w @vendure/common && npm --prefix .. run build -w @vendure/core && npm --prefix .. run build -w @vendure/asset-server-plugin && npm --prefix .. run build -w @vendure/dashboard",
+    "typecheck": "tsc --noEmit",
+    "build:dashboard": "vite build",
+    "build": "npm run build:packages && npm run typecheck && npm run build:dashboard",
+    "seed": "node -r ts-node/register seed.ts",
+    "start": "node -r ts-node/register server.ts"
+  }
+}
