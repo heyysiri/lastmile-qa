@@ -84,12 +84,12 @@ export function TesterPersona({ tester }: { tester: ProjectTester }) {
   </>;
 }
 
-export function JourneyStages({ journey, network, evidence }: {
-  journey: ProjectJourney; network: ProjectTester['context']['network']; evidence?: ProjectStageEvidence[];
+export function JourneyStages({ journey, network, evidence, compact = false }: {
+  compact?: boolean; journey: ProjectJourney; network: ProjectTester['context']['network']; evidence?: ProjectStageEvidence[];
 }) {
   if (!journey.stages?.length) return null;
   let currentNetwork = network;
-  return <div>
+  const content = <div>
     <p className="field-hint">Pauses are actual short interruptions, not simulated days.</p>
     <ol className="project-journeys" aria-label="Journey stages">{journey.stages.map((stage, index) => {
       currentNetwork = stage.network ?? currentNetwork;
@@ -106,6 +106,7 @@ export function JourneyStages({ journey, network, evidence }: {
       </li>;
     })}</ol>
   </div>;
+  return compact ? <details className="project-disclosure"><summary>{journey.stages.map(stage => stage.label).join(' → ')}</summary>{content}</details> : content;
 }
 
 const confidenceLabel: Record<ProjectFinding['confidence'], string> = {
@@ -135,14 +136,23 @@ export function RunFindings({ run, project, title = 'Latest findings', actions, 
     {run.error && <p className="note warn">{run.error}</p>}
     {run.findings.map(finding => {
       const tester = findTester(finding.testerId);
+      const result = run.results.find(item => item.journey.id === finding.journeyId);
+      const failed = result?.checks.find(check => finding.failedCheckIds.includes(check.id));
+      const definition = result?.journey.checks.find(check => check.id === failed?.id);
+      const generatedTitle = failed?.label === finding.title && definition && ['label', 'fieldName'].includes(definition.locator.by);
+      const title = generatedTitle ? `${fieldName(definition.locator.value)} did not match` : finding.title;
       return <article className="project-finding" data-confidence={finding.confidence} key={finding.id}>
         <div className="project-finding-heading">
-          <h3>{finding.title}</h3>
+          <h3>{title}</h3>
           <span className={`pill pill-${finding.confidence === 'confirmed' ? 'peach' : 'lilac'}`}>{confidenceLabel[finding.confidence]}</span>
         </div>
         {tester && <p className="project-finding-role">{tester.name} · {tester.role}</p>}
-        <p>{finding.description}</p>
+        {generatedTitle && failed ? <div className="check-values">
+          <span><b>Expected</b> {displayValue(failed.expected)}</span>
+          <span><b>Observed</b> {displayValue(failed.actual)}</span>
+        </div> : <p>{finding.description}</p>}
         <details className="project-disclosure finding-context"><summary>Why it matters & evidence</summary>
+          {generatedTitle && <p>{finding.description}</p>}
           {finding.impact && <p>{finding.impact}</p>}
           <SourceCitations sources={finding.sources} />
         </details>
@@ -174,7 +184,7 @@ export function TesterResults({ results, accounts }: { results: ProjectTesterRes
     </header>
     <details className="project-disclosure"><summary>About this tester</summary><TesterPersona tester={result.tester} /></details>
     <p><strong>{result.journey.title}</strong></p>
-    <JourneyStages journey={result.journey} network={result.tester.context.network} evidence={result.run.evidence?.stages ?? []} />
+    <JourneyStages compact journey={result.journey} network={result.tester.context.network} evidence={result.run.evidence?.stages ?? []} />
     <ProjectChecks checks={result.checks} />
     {result.run.steps.length > 0 && <RunSteps run={result.run} />}
     {result.run.artifacts.some(path => /\.png$/i.test(path)) && <details className="project-disclosure">

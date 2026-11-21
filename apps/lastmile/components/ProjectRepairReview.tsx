@@ -137,7 +137,10 @@ export function ProjectRepairReview({ id }: { id: string }) {
         <h2>Verification results</h2>
         <p>{job.verification.message}</p>
         {job.verification.outcome === 'verified' && <p>The patch passed verification in the private checkout. You can review and apply it in your own checkout.</p>}
-        <TesterResults results={job.verification.results} accounts={job.project.accounts} />
+        {job.verification.outcome === 'verified' ? <details className="project-disclosure">
+          <summary>{job.verification.results.reduce((count, result) => count + result.checks.length, 0)} checks passed across {job.verification.results.length} journeys</summary>
+          <TesterResults results={job.verification.results} accounts={job.project.accounts} />
+        </details> : <TesterResults results={job.verification.results} accounts={job.project.accounts} />}
       </section>}
       {patch && <section className="project-report project-patch" aria-labelledby="patch-heading">
         <h2 id="patch-heading">Proposed patch</h2>
