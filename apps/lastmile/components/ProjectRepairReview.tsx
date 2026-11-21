@@ -23,6 +23,10 @@ export function ProjectRepairAction({ project, run }: { project: Project; run: P
   return <PrepareProjectRepair project={project} run={run} key={run.id} />;
 }
 
+// Only settled, unsuccessful attempts may be retried; active, reviewable, and verified jobs stay single.
+const canRetryRepair = (job: ProjectRepair) => job.status === 'interrupted'
+  || (job.status === 'completed' && job.verification?.outcome !== 'verified');
+
 function PrepareProjectRepair({ project, run }: { project: Project; run: ProjectRun }) {
   const router = useRouter();
   const health = useLoad(api.health);
@@ -37,12 +41,13 @@ function PrepareProjectRepair({ project, run }: { project: Project; run: Project
 
   const latest = records.data?.filter(job => job.request.runId === run.id)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  const retry = Boolean(latest && canRetryRepair(latest));
   const ready = health.data?.projectRepairsReady === true && !health.error;
   const needsSetup = !project.commands?.start.length || (!health.loading && !ready);
 
   return <div className="project-repair-action">
-    {latest && !write.pending && <Link className="btn secondary" href={projectRepairHref(latest.id)}><FilePenLine size={16} aria-hidden="true" />Review fix</Link>}
-    {(!latest || write.pending) && <>
+    {latest && (!write.pending || retry) && <Link className="btn secondary" href={projectRepairHref(latest.id)}><FilePenLine size={16} aria-hidden="true" />{retry ? 'Review last attempt' : 'Review fix'}</Link>}
+    {(!latest || retry || write.pending) && <>
       {!write.pending && needsSetup ? <>
         {!project.commands?.start.length && <p className="field-hint">To prepare and verify fixes, connect the repository with a start command in Advanced connection setup.</p>}
         {!health.loading && !ready && <p className="field-hint">Enable project repairs on the runner to prepare and verify fixes.</p>}
@@ -50,7 +55,7 @@ function PrepareProjectRepair({ project, run }: { project: Project; run: Project
         disabled={!write.ready || records.loading || Boolean(records.error) || write.busy || (!ready && !write.pending)}
         onClick={() => void write.submit({ requestId: newRequestId(), runId: run.id })}>
         <FilePenLine size={16} aria-hidden="true" />
-        {write.busy ? 'Requesting fix…' : write.pending ? 'Recover fix request' : 'Prepare fix'}
+        {write.busy ? 'Requesting fix…' : write.pending ? 'Recover fix request' : retry ? 'Retry fix' : 'Prepare fix'}
       </button>}
     </>}
     <StudioError error={health.error} onRetry={health.reload} />

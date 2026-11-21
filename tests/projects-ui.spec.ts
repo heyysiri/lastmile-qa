@@ -68,6 +68,7 @@ async function mockApi(page: Page, setup?: ProjectDetail) {
   let project = setup;
   let connectId: string | undefined;
   let repair: ProjectRepair | undefined;
+  const earlierRepairs: ProjectRepair[] = [];
   const health = { status: 'ok', modelConfigured: true, executionReady: true,
     projectDiscoveryReady: true, projectExecutionReady: true, projectRepairsReady: true };
   const connects: string[] = [];
@@ -76,7 +77,7 @@ async function mockApi(page: Page, setup?: ProjectDetail) {
   const repairs: ProjectRepairRequest[] = [];
   const verifications: { requestId: string; patchHash: string }[] = [];
   const lookups: string[] = [];
-  const flags = { loseConnect: false, loseRun: false, loseVerify: false, stale: false };
+  const flags = { loseConnect: false, loseRun: false, loseVerify: false, loseRepair: false, stale: false };
   await page.route('**/api/runner/**', async route => {
     const request = route.request();
     expect(request.headers()).not.toHaveProperty('authorization');
@@ -127,22 +128,28 @@ async function mockApi(page: Page, setup?: ProjectDetail) {
     }
     if (path === 'project-repairs' && method === 'GET') {
       expect(url.searchParams.get('projectId')).toBe(project.id);
-      return respond(repair ? [repair] : []);
+      return respond(repair ? [...earlierRepairs, repair] : []);
     }
     if (path === 'project-repairs' && method === 'POST') {
       const input = request.postDataJSON() as ProjectRepairRequest;
       repairs.push(input);
       const sourceRun = project.runs.find(run => run.id === input.runId);
       if (!sourceRun) return missing();
-      repair = { id: 'fix-1', projectId: project.id, request: input, project, sourceRun,
-        phase: 'prepare', status: 'awaiting_review', createdAt: timestamp, sourceVersion: hash,
+      const duplicate = [...earlierRepairs, ...(repair ? [repair] : [])].find(job => job.request.requestId === input.requestId);
+      if (duplicate) return respond(duplicate, 202);
+      if (repair && !retryable(repair)) return respond({ code: 'repair_active', message: 'This run already has a repair.' }, 409);
+      if (repair) earlierRepairs.push(repair);
+      const number = earlierRepairs.length + 1;
+      repair = { id: `fix-${number}`, projectId: project.id, request: input, project, sourceRun,
+        phase: 'prepare', status: 'awaiting_review', createdAt: `2026-11-20T08:0${number}:00.000Z`, sourceVersion: hash,
         patch: { hash, summary: 'Persist the selected date.', changes: [
           { path: reference.path, beforeHash: hash, before: 'date: originalDate', after: 'date: enteredDate' },
         ] } };
-      return respond(repair, 202);
+      return flags.loseRepair ? route.abort() : respond(repair, 202);
     }
-    if (path === 'project-repairs/fix-1') return repair ? respond(repair) : missing();
-    if (path === 'project-repairs/fix-1/verify' && repair) {
+    const stored = [...earlierRepairs, ...(repair ? [repair] : [])].find(job => path === `project-repairs/${job.id}`);
+    if (stored) return respond(stored);
+    if (repair && path === `project-repairs/${repair.id}/verify`) {
       const input = request.postDataJSON() as NonNullable<ProjectRepair['verificationRequest']>;
       verifications.push(input);
       if (flags.stale) {
@@ -167,6 +174,14 @@ async function mockApi(page: Page, setup?: ProjectDetail) {
       project.history = [{ testerId: 'noa', runId: result.run.id, goal: journey.goal,
         outcome: 'failed', observations: ['Observed Monday after reload.'], createdAt: timestamp }];
     },
+    setRepair(change: Partial<ProjectRepair>) {
+      if (!repair) throw new Error('A repair must exist first');
+      repair = { ...repair, ...change };
+    },
+    failPreparation() {
+      if (!repair) throw new Error('A repair must exist first');
+      repair = { ...repair, patch: undefined, status: 'completed', error: 'No patch could be proposed for this failure.' };
+    },
     rejectPatch() {
       if (!repair) throw new Error('A repair must exist first');
       repair = { ...repair, status: 'completed', verification: {
@@ -175,6 +190,9 @@ async function mockApi(page: Page, setup?: ProjectDetail) {
     },
   };
 }
+
+const retryable = (job: ProjectRepair) => job.status === 'interrupted'
+  || (job.status === 'completed' && job.verification?.outcome !== 'verified');
 
 async function fillConnection(page: Page) {
   await page.getByLabel('Project name').fill('Room Desk');
@@ -325,6 +343,88 @@ test('reviews actual patch files, handles a stale patch, and recovers rejected v
   await expect(verification.getByText('Saved reservation', { exact: true })).toBeVisible();
   await expect(verification.getByText('Time zone preserved')).toBeHidden();
   expect(mock.verifications.map(item => item.patchHash)).toEqual([hash, 'b'.repeat(64)]);
+});
+
+async function prepareFirstFix(page: Page, mock: Awaited<ReturnType<typeof mockApi>>) {
+  await page.goto('/projects/desk');
+  await page.getByRole('button', { name: 'Run test team' }).click();
+  await expect(page.getByText('Checking the booking form')).toBeVisible();
+  mock.finish('confirmed', true);
+  await page.getByRole('button', { name: 'Prepare fix' }).click();
+  await expect(page).toHaveURL(/\/project-repairs\/fix-1$/);
+  await page.goto('/projects/desk');
+}
+
+test('retries a repair that proposed no patch with a new request ID while keeping the prior evidence', async ({ page }) => {
+  const mock = await mockApi(page, { ...makeProject(), accounts: [{ id: 'audit-account', label: 'Audit access' }] });
+  await prepareFirstFix(page, mock);
+  mock.failPreparation();
+  await page.reload();
+  await expect(page.getByRole('link', { name: 'Review last attempt' })).toHaveAttribute('href', '/project-repairs/fix-1');
+  await expect(page.getByRole('button', { name: 'Prepare fix' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Retry fix' }).click();
+  await expect(page).toHaveURL(/\/project-repairs\/fix-2$/);
+  expect(mock.repairs).toHaveLength(2);
+  expect(mock.repairs[1].runId).toBe(mock.repairs[0].runId);
+  expect(mock.repairs[1].requestId).not.toBe(mock.repairs[0].requestId);
+  await expect(page.getByText('Ready for review')).toBeVisible();
+  await page.goto('/projects/desk');
+  await expect(page.getByRole('link', { name: 'Review fix' })).toHaveAttribute('href', '/project-repairs/fix-2');
+  await expect(page.getByRole('button', { name: 'Retry fix' })).toHaveCount(0);
+  expect(mock.repairs).toHaveLength(2);
+});
+
+const unsuccessful: [string, Partial<ProjectRepair>][] = [
+  ['rejected verification', { phase: 'verify', status: 'completed', verification: { outcome: 'rejected', message: 'Still fails.', results: [result, control] } }],
+  ['inconclusive verification', { phase: 'verify', status: 'completed', verification: { outcome: 'inconclusive', message: 'Could not tell.', results: [result, control] } }],
+  ['interrupted preparation', { status: 'interrupted', error: 'The runner restarted.' }],
+  ['interrupted verification', { phase: 'verify', status: 'interrupted', error: 'The runner restarted.' }],
+];
+for (const [name, change] of unsuccessful) {
+  test(`offers a retry after ${name}`, async ({ page }) => {
+    const mock = await mockApi(page, { ...makeProject(), accounts: [{ id: 'audit-account', label: 'Audit access' }] });
+    await prepareFirstFix(page, mock);
+    mock.setRepair(change);
+    await page.reload();
+    await expect(page.getByRole('link', { name: 'Review last attempt' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Retry fix' })).toBeEnabled();
+  });
+}
+
+const settled: [string, Partial<ProjectRepair>][] = [
+  ['queued preparation', { status: 'queued', patch: undefined }],
+  ['running preparation', { status: 'running', patch: undefined }],
+  ['a patch awaiting review', {}],
+  ['running verification', { phase: 'verify', status: 'running' }],
+  ['a verified fix', { phase: 'verify', status: 'completed', verification: { outcome: 'verified', message: 'Passes.', results: [result, control] } }],
+];
+for (const [name, change] of settled) {
+  test(`offers no retry for ${name}`, async ({ page }) => {
+    const mock = await mockApi(page, { ...makeProject(), accounts: [{ id: 'audit-account', label: 'Audit access' }] });
+    await prepareFirstFix(page, mock);
+    mock.setRepair(change);
+    await page.reload();
+    await expect(page.getByRole('link', { name: 'Review fix' })).toHaveAttribute('href', '/project-repairs/fix-1');
+    await expect(page.getByRole('button', { name: /Retry fix|Prepare fix|Recover fix request/ })).toHaveCount(0);
+    expect(mock.repairs).toHaveLength(1);
+  });
+}
+
+test('recovers a lost retry response with the same new request ID and no duplicate launch', async ({ page }) => {
+  const mock = await mockApi(page, { ...makeProject(), accounts: [{ id: 'audit-account', label: 'Audit access' }] });
+  await prepareFirstFix(page, mock);
+  mock.failPreparation();
+  await page.reload();
+  mock.flags.loseRepair = true;
+  await page.getByRole('button', { name: 'Retry fix' }).click();
+  await expect(page.getByRole('button', { name: 'Recover fix request' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Review last attempt' })).toBeVisible();
+  mock.flags.loseRepair = false;
+  await page.reload();
+  await expect(page.getByRole('link', { name: 'Review fix' })).toHaveAttribute('href', '/project-repairs/fix-2');
+  await expect(page.getByRole('button', { name: /Retry fix|Recover fix request/ })).toHaveCount(0);
+  expect(mock.repairs).toHaveLength(2);
+  expect(mock.repairs[1].requestId).not.toBe(mock.repairs[0].requestId);
 });
 
 test('keeps invalid advanced origins in the form until they are corrected', async ({ page }) => {
