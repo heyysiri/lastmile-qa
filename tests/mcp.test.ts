@@ -14,13 +14,13 @@ const project={id:'project-1',name:'Local app',status:'ready',accounts:[{id:'acc
 const baseRun={id:'run-1',projectId:project.id,request:{requestId:'run-1',mode:'explore',autoRepair:true},status:'completed',metrics:{failed:1,inconclusive:0}};
 const repair={id:'repair-1',projectId:project.id,request:{requestId:'auto-run-1',runId:'run-1',automatic:true},status:'running',phase:'verify'};
 const send=(res:ServerResponse,body:unknown,status=200)=>{res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify(body));};
-async function fixture(handler:(req:IncomingMessage,res:ServerResponse,body:Record<string,unknown>)=>void){
+async function fixture(handler:(req:IncomingMessage,res:ServerResponse,body:Record<string,unknown>)=>void,apiToken=token){
  const requests:{path:string;method:string;body:Record<string,unknown>}[]=[];
  const server=createServer(async(req,res)=>{
   let raw='';for await(const chunk of req)raw+=chunk;
   const body=raw?JSON.parse(raw):{};
   requests.push({path:req.url!,method:req.method!,body});
-  if(req.headers.authorization!==`Bearer ${token}`){send(res,{code:'unauthorized',message:`Do not echo ${token}`},401);return;}
+  if(req.headers.authorization!==`Bearer ${apiToken}`){send(res,{code:'unauthorized',message:`Do not echo ${token}`},401);return;}
   handler(req,res,body);
  });
  await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
@@ -183,12 +183,23 @@ it('rejects unsafe configuration at startup without printing its values',async()
  catch(error){expect(String(error)).toContain('Cannot start lastmile qa. MCP');expect(String(error)).not.toContain(secret);}
 });
 
-it('redacts string values without corrupting JSON keys, booleans, or null for short credentials',async()=>{
- const {url}=await fixture((_req,res)=>send(res,{...project,nullable:null,failed:false,message:'a null',accounts:[{id:'account-1',label:'Staff'}]}));
+it('preserves connection IDs and statuses for short credentials while excluding upstream extras',async()=>{
+ const connected={id:'abca-1234',status:'ready'};
+ const {url,requests}=await fixture((req,res)=>send(res,req.method==='POST'?{...project,...connected,nullable:null,failed:false,message:'a null',accounts:[{...account}],error:`${account.password} ${token}`}:{...project,...connected}));
  const {client}=await start(url);
  const result=await call(client,'lastmile_connect_project',{...connection,accounts:[{label:'Staff',username:'a',password:'null'}]});
- expect(data(result)).toMatchObject({nullable:null,failed:false,message:'[private] [private]'});
- expect(data(result).accounts).toBeDefined();
+ expect(data(result)).toEqual({...connected,dashboardUrl:'http://127.0.0.1:3000/projects/abca-1234'});
+ const fetched=data(await call(client,'lastmile_get_project',{projectId:data(result).id}));
+ expect(fetched).toMatchObject(connected);
+ expect(requests.at(-1)?.path).toBe('/api/projects/abca-1234');
  const {tools}=await client.listTools();
  expect(tools.find(t=>t.name==='lastmile_run_project')?.annotations?.destructiveHint).toBe(true);
+});
+
+it('preserves opaque identifiers, statuses, findings, and evidence with a short runner token',async()=>{
+ const run={...baseRun,id:'a-run',status:'running',findings:[{id:'a-finding',title:'Save failed'}]};
+ const {url}=await fixture((req,res)=>send(res,req.url?.startsWith('/api/project-repairs?')?[]:run),'a');
+ const {client}=await start(url,{RUNNER_API_TOKEN:'a'});
+ const result=data(await call(client,'lastmile_get_run',{runId:'a-run'}));
+ expect(result).toMatchObject({run,repairStatus:'awaiting_run',dashboardUrl:'http://127.0.0.1:3000/projects/project-1'});
 });

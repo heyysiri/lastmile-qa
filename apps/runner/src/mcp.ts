@@ -4,6 +4,7 @@ import {ConnectProjectSchema,ProjectRunRequestSchema,ProjectRepairRequestSchema,
 
 const id=ConnectProjectSchema.shape.requestId;
 const empty=z.object({}).strict();
+const connectionResponse=z.object({id,status:z.enum(['discovering','ready','failed'])});
 const errors:Record<string,string>={
  unauthorized:'Runner authorization failed. Check RUNNER_API_TOKEN.',
  not_found:'The requested project, connection, run, or repair does not exist.',
@@ -43,6 +44,7 @@ export function createMcpServer(env:NodeJS.ProcessEnv=process.env){
  if(!Number.isInteger(timeout)||timeout<1||timeout>120000)throw new Error('LASTMILE_MCP_TIMEOUT_MS must be between 1 and 120000');
  if(!token.trim()||/[\r\n]/.test(token))throw new Error('RUNNER_API_TOKEN must be a nonempty single line');
  const link=(projectId:string)=>`${dashboardUrl}/projects/${encodeURIComponent(projectId)}`;
+ const connected=(value:unknown)=>{const project=connectionResponse.parse(value);return {...project,dashboardUrl:link(project.id)};};
  async function request<T>(path:string,body?:unknown):Promise<T>{
   const signal=AbortSignal.timeout(timeout);
   try{
@@ -59,10 +61,9 @@ export function createMcpServer(env:NodeJS.ProcessEnv=process.env){
    throw new ApiError('runner_unavailable','Cannot reach the runner. Check that it is running and RUNNER_URL is correct. Redirects are not followed.');
   }
  }
- async function respond(action:()=>Promise<unknown>,secrets:string[]=[]):Promise<CallToolResult>{
+ async function respond(action:()=>Promise<unknown>):Promise<CallToolResult>{
   try{
-   const privateValues=[token,...secrets].filter(Boolean);
-   const text=JSON.stringify(await action(),(_key,value)=>typeof value==='string'?privateValues.reduce((safe,secret)=>safe.replaceAll(secret,'[private]'),value):value);
+   const text=JSON.stringify(await action());
    return {content:[{type:'text',text}]};
   }catch(error){
    const safe=error instanceof ApiError?{code:error.code,message:error.message,status:error.status}:{code:'invalid_runner_response',message:'The runner returned an unexpected response.'};
@@ -77,8 +78,8 @@ export function createMcpServer(env:NodeJS.ProcessEnv=process.env){
   const projects=await request<Project[]>('/api/projects');
   return projects.map(({id,name,status,progress,appUrl,error})=>({id,name,status,progress,appUrl,error,dashboardUrl:link(id)}));
  }));
- server.registerTool('lastmile_connect_project',{description:'Connect an existing repository and running development app. Use a stable requestId and absolute repositoryPath on the runner machine. Discovery runs asynchronously: poll lastmile_get_project until ready or failed. Accounts must be synthetic development accounts. Optional fixed commands enable private repair verification; start is an argv array, not a shell string. Recover an uncertain response with lastmile_get_connection(requestId).',inputSchema:ConnectProjectSchema,annotations:write},args=>respond(()=>request('/api/projects',args),args.accounts.flatMap(account=>[account.username,account.password])));
- server.registerTool('lastmile_get_connection',{description:'Recover a connection after a lost response using its original requestId. This never creates a project. Poll lastmile_get_project for discovery.',inputSchema:z.object({requestId:id}).strict(),annotations:read},({requestId})=>respond(()=>request(`/api/projects/by-request/${requestId}`)));
+ server.registerTool('lastmile_connect_project',{description:'Connect an existing repository and running development app. Use a stable requestId and absolute repositoryPath on the runner machine. Discovery runs asynchronously: poll lastmile_get_project until ready or failed. Accounts must be synthetic development accounts. Optional fixed commands enable private repair verification; start is an argv array, not a shell string. Recover an uncertain response with lastmile_get_connection(requestId).',inputSchema:ConnectProjectSchema,annotations:write},args=>respond(async()=>connected(await request('/api/projects',args))));
+ server.registerTool('lastmile_get_connection',{description:'Recover a connection after a lost response using its original requestId. This never creates a project. Poll lastmile_get_project for discovery.',inputSchema:z.object({requestId:id}).strict(),annotations:read},({requestId})=>respond(async()=>connected(await request(`/api/projects/by-request/${requestId}`))));
  server.registerTool('lastmile_get_project',{description:'Inspect discovery progress, generated testers and journeys, gaps, and compact run/repair history. Wait for ready before running tests; failed is terminal and includes error.',inputSchema:z.object({projectId:id}).strict(),annotations:read},({projectId})=>respond(async()=>{
   const project=await request<ProjectDetail>(`/api/projects/${projectId}`);
   return {...project,...(project.runs?{runs:project.runs.map(runSummary)}:{}),...(project.repairs?{repairs:project.repairs.map(repairSummary)}:{}),dashboardUrl:link(projectId)};
