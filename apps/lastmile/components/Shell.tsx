@@ -1,39 +1,45 @@
 'use client';
+
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ExternalLink, FileText, History, Play, Users } from 'lucide-react';
+import { ChevronDown, FlaskConical, History, SlidersHorizontal } from 'lucide-react';
 import { api, useLoad } from '../lib/api';
 
-const links = [
-  { href: '/', label: 'Run', icon: Play },
-  { href: '/scenarios', label: 'Scenarios', icon: FileText },
-  { href: '/contexts', label: 'Context packs', icon: Users },
-  { href: '/runs', label: 'Run history', icon: History },
+const advanced = [
+  { href: '/scenarios', label: 'Scenarios' },
+  { href: '/contexts', label: 'Context packs' },
+  { href: '/runs', label: 'Individual runs' },
 ] as const;
 
 export function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
-  const health = useLoad(api.health, []);
-  const active = (href: string) => (href === '/' ? path === '/' : path.startsWith(href));
+  const health = useLoad(api.health);
   return (
     <div className="shell">
+      <a className="skip-link" href="#main-content">Skip to content</a>
       <aside className="side">
-        <Link href="/" className="brand">LastMile QA<small>seller journey workbench</small></Link>
+        <Link href="/" className="brand">
+          <span className="brand-mark" aria-hidden="true"><FlaskConical size={20} /><i /></span>
+          <span>LastMile<small>QA studio</small></span>
+        </Link>
         <nav className="nav" aria-label="Primary">
-          {links.map(({ href, label, icon: Icon }) => (
-            <Link key={href} href={href} aria-current={active(href) ? 'page' : undefined}><Icon size={16} aria-hidden /> {label}</Link>
-          ))}
+          <Link href="/" aria-current={path === '/' || /^\/studies\/[^/]+$/.test(path) ? 'page' : undefined}>
+            <FlaskConical size={17} aria-hidden="true" /> Studies
+          </Link>
+          <Link href="/executions" aria-current={path === '/executions' || path.includes('/executions/') ? 'page' : undefined}>
+            <History size={17} aria-hidden="true" /> History
+          </Link>
+          <details className="nav-advanced" open={advanced.some(item => path.startsWith(item.href)) || undefined}>
+            <summary><SlidersHorizontal size={16} aria-hidden="true" /> Advanced <ChevronDown size={14} className="nav-chevron" aria-hidden="true" /></summary>
+            <div>{advanced.map(({ href, label }) => <Link key={href} href={href} aria-current={path.startsWith(href) ? 'page' : undefined}>{label}</Link>)}</div>
+          </details>
         </nav>
-        <div className="side-foot">
-          <div aria-live="polite">
-            {health.loading ? 'Checking runner…' : health.error ? <span>Runner offline</span> : (
-              <span>Runner online · {health.data?.executionReady ? 'execution ready' : 'execution not ready'}</span>
-            )}
-          </div>
-          <a href="http://127.0.0.1:3001" target="_blank" rel="noreferrer"><ExternalLink size={14} aria-hidden /> Open seller demo</a>
+        <div className="side-foot" aria-live="polite">
+          <i className={health.error ? 'offline' : health.loading ? 'checking' : ''} aria-hidden="true" />
+          {health.loading ? 'Checking runner…' : health.error ? 'Runner offline' : 'Runner online'}
         </div>
       </aside>
-      <main className="main">{children}</main>
+      <main className="main" id="main-content" tabIndex={-1}>{children}</main>
     </div>
   );
 }

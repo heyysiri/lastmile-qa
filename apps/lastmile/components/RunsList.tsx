@@ -1,7 +1,7 @@
 'use client';
 import { api, useLoad } from '../lib/api';
 import { ErrorNote, Pending } from './ui';
-import { RunsTable } from './RunLauncher';
+import { RunsTable } from './RunsTable';
 
 export function RunsList() {
   const runs = useLoad(api.runs, []);

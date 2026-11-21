@@ -104,3 +104,25 @@ describe('Strands journey loop', () => {
     expect(page.execute).not.toHaveBeenCalled();
   });
 });
+
+it('gives each tester its declared circumstances without leaking outcome internals', async()=>{
+ const background='I sell handmade bags and am setting up my first online store.';
+ let observed='';
+ vi.spyOn(OpenAIModel.prototype,'stream').mockImplementation(async function*(messages){observed=JSON.stringify(messages);yield* toolCalls(['finish',{status:'done'}]);});
+ const personalRun={...run,context:{...run.context,background}};
+ await runAgent(browser() as unknown as BrowserSession,personalRun,options);
+ expect(observed).toContain(background);
+ expect(observed).not.toContain('state_equals');
+});
+
+it('rejects substituted literal values and accepts only reviewed input references when slots exist', async () => {
+ const page=browser();
+ let turn=0;
+ vi.spyOn(OpenAIModel.prototype,'stream').mockImplementation(async function*(){
+  if(turn++===0) yield* toolCalls(['fill',{locator:{by:'label',value:'Store name'},value:{literal:'Changed name'}}]);
+  else yield* toolCalls(['fill',{locator:{by:'label',value:'Store name'},value:{input:'storeName'}}],['finish',{status:'done'}]);
+ });
+ const result=await runAgent(page as unknown as BrowserSession,run,options);
+ expect(result.finished).toBe(true);
+ expect(page.execute.mock.calls).toEqual([[{tool:'fill',locator:{by:'label',value:'Store name'},value:{input:'storeName'}}]]);
+});

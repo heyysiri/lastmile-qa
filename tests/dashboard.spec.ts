@@ -1,7 +1,7 @@
 import { test, expect } from './runner-ui.fixture';
 import { randomUUID } from 'node:crypto';
 
-test('author a new task and context, reload, then inspect an honest run outcome', async ({ page }) => {
+test('advanced task and context authoring persists across reload', async ({ page }) => {
   const suffix = randomUUID().slice(0, 8);
   const scenarioId = `task-${suffix}`;
   const scenarioName = `Manual onboarding ${suffix}`;
@@ -28,15 +28,8 @@ test('author a new task and context, reload, then inspect an honest run outcome'
   await page.getByRole('button', { name: 'Create', exact: true }).click();
   await expect(page.getByRole('heading', { name: `${contextName} · revision 1` })).toBeVisible();
 
-  await page.goto('/');
-  await page.getByRole('combobox', { name: 'Scenario', exact: true }).selectOption(scenarioId);
-  await page.getByRole('combobox', { name: 'Context pack', exact: true }).selectOption(contextId);
-  await page.getByRole('button', { name: 'Launch run' }).click();
-  await expect(page).toHaveURL(/\/runs\/[a-zA-Z0-9_-]+/);
-  await expect(page.getByRole('listitem').filter({ hasText: 'Browser execution is not configured yet' })).toBeVisible();
-  await expect(page.getByText('inconclusive', { exact: true }).first()).toBeVisible();
   await page.reload();
-  await expect(page.getByRole('listitem').filter({ hasText: 'Browser execution is not configured yet' })).toBeVisible();
+  await expect(page.getByRole('button', { name: new RegExp(contextName) })).toBeVisible();
 });
 
 test('context editor rejects an unsupported viewport and fits a small screen', async ({ page }) => {

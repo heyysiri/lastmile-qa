@@ -12,6 +12,7 @@
     "build": "pnpm -r --if-present build",
     "lint": "eslint .",
     "demo:seed": "tsx scripts/seed-demo.ts",
+    "demo:study": "tsx scripts/demo-study.ts",
     "demo:investigate": "tsx scripts/demo-investigate.ts"
   },
   "dependencies": {

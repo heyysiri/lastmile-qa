@@ -1,73 +1,63 @@
 # LastMile QA
 
-A local testing workbench for configurable seller-marketplace journeys. Define a task, choose seller circumstances, and inspect evidence against explicit success criteria.
+Describe your audience, review generated synthetic testers, and run their journeys against a connected application. LastMile checks actual outcomes and keeps the evidence. Generated profiles are exploratory test cases, not measured human behavior.
 
-## Development
+## Run locally
 
-Use Node 22 and pnpm 10.33.0. SQLite and Playwright run locally.
+Use Node 22+ and pnpm 10.33.0.
 
 1. `pnpm install`
 2. `pnpm exec playwright install chromium`
-3. Copy `.env.example` to `.env` and configure server-side settings. The local development tokens in the example are for loopback-only use.
+3. Copy `.env.example` to `.env` if it does not exist. Set `OPENAI_API_KEY` and an accessible `OPENAI_MODEL`. Credentials stay server-side.
 4. `pnpm dev`
 
 Dashboard: http://127.0.0.1:3000
-Seller app: http://127.0.0.1:3001
-Runner API: http://127.0.0.1:4000
+Connected seller demo: http://127.0.0.1:3001
+Runner: http://127.0.0.1:4000
 
-`OPENAI_API_KEY` and an accessible `OPENAI_MODEL` are required for live AI execution. A ChatGPT/Codex subscription or connected Claude coding provider does not by itself supply an OpenAI API key. Never place API credentials in browser-exposed variables. No deployment or third-party marketplace connection is configured.
+Stop an existing stack before starting another. Root `.env` changes require a restart. No cloud resources or deployment are required at this checkpoint.
 
-## Configuration boundaries
+## First generated-audience checkpoint
 
-Scenarios contain goals, entry paths, starting-state fixtures, typed input slots and declarative outcome assertions. Context packs separately contain viewport, locale, language/familiarity guidance, interaction mode, reduced-motion preference, injected request-delay settings and input bindings. Adding another supported task should change configuration, not runner code.
+The connected app currently supports store setup and inventory updates. Domain text helps describe the audience; it does not automatically connect another application or add business features. The generator uses registered workflow outcomes and current browser observations. It cannot invent backend fields or upload fixtures.
 
-The store onboarding and inventory definitions are editable starter examples. The demo app implements these business features; the engine must not branch on their IDs. Browser constraints and AI behavioral guidance are reported separately. This is not real-device testing or validated simulation of a demographic group.
+Try this audience brief with three testers:
 
-## Tests
+> Test two different new sellers setting up their stores with distinct names and one experienced seller updating stock quantity. They all read English and use a pointer with normal connectivity. Keep tasks within the connected app capabilities. Generate different useful inputs and explain the assumptions.
 
-- `pnpm test:unit tests/contracts.test.ts` checks the shared configuration boundary.
-- Run targeted test files for changed packages as recorded in the task reports.
-- With the local stack running, `pnpm exec playwright test tests/foundation.spec.ts` exercises actual UI submission, backend persistence and immutable configuration snapshots.
-- Dashboard/lifecycle tests use an isolated runner with the no-model executor; they never call OpenAI. `tests/browser-seller.integration.test.ts` needs the seller app running. `demo:investigate` explicitly exercises live OpenAI execution and comparison.
-- `pnpm typecheck`, `pnpm lint`, and `pnpm build` validate the integrated workspace.
+1. Select the connected application and generate testers. Expect a real model-generated draft, not instant prefilled results. Generation does not start their journeys.
+2. Review names, circumstances, coverage reasons, goals, inputs, assumptions and expected outcomes. Wording can vary between generations. Check that the proposed tasks match your intent.
+3. Edit one tester's input or name, save, and reload. Expect your saved revision to persist. A stale edit should be rejected instead of silently overwriting another revision.
+4. Launch the reviewed study. Expect up to three independent journeys to run concurrently, each in its own browser session and seller namespace. Refreshing the page must retain their progress.
+5. Inspect each result. For normal conditions on the healthy demo, expect successful UI and backend assertions. A blocked agent or unavailable service remains inconclusive, never an invented product defect. Each completed journey links to its actual evidence.
+6. Rerun the saved study. Expect a new execution with fresh state; previous results remain attached to their original snapshot.
 
-## Current checkpoint
+`pnpm demo:study` performs an explicit paid live model acceptance run: generates three testers, launches them, checks separate namespaces, actual passing assertions and overlapping execution, and saves evidence to `artifacts/c1-checkpoint.json`. Run it intentionally; it is not part of routine unit tests. Pass a saved study ID (`pnpm demo:study <id>`) to rerun those same testers without regenerating them.
 
-The runner uses Strands with the configured OpenAI model for browser exploration. Only independent UI and authenticated state assertions assign the result. Runs record actions, screenshots, a Playwright trace, HTTP/transport evidence, configuration snapshots and the served source identity.
+## What is and is not implemented
 
-A passing AI run can be replayed under another saved context without model calls. Changed controls, routes or keyboard focus produce `replay_mismatch` / inconclusive. A failed replay can be compared with the passing control: two target trials, two control trials, then two trials per single-factor substitution within the selected attempt budget. Guidance settings must match; only configured enforced factors enter the search.
+The browser engine uses an independent Strands agent per tester. Each has its own conversation, browser and starting state. Browser actions are sequential within a tester; study execution allows up to three testers concurrently. Each journey is capped at 20 model calls, 40 browser actions and 180 seconds.
 
-Coding-agent repair, patch approval and post-repair verification remain for the following checkpoint. File uploads are rejected until approved fixtures are registered. Language/familiarity are behavioral guidance, not validated human simulation; viewport emulation is not a real device. The runtime is one local runner per database and port.
+The verifier independently checks visible UI and authenticated persisted state against the registered outcome contract. Changing a tester's goal does not silently rewrite its outcome contract. Review both before launch. Language, familiarity and background are behavioral guidance, not verified simulation of real people; browser locale does not translate the app. Viewports are emulated, not physical devices.
 
-Runtime databases live in `.data/`; evidence lives in `artifacts/`. Both are ignored by Git. Project plans, execution notes and child task reports also remain local.
+General application onboarding, richer starting-state/file integrations, evidence-backed repair proposals, patch approval, post-repair verification, optional voice input and AWS deployment are later checkpoints. No arbitrary external URL execution or autonomous application patches are enabled here.
 
-## Manual AI and comparison checkpoint
+The earlier replay and controlled-comparison engines remain available for corroborating verified failures. Their historical runs and configuration are retained. Lower-level configuration is an advanced workflow; it is no longer the product's starting point.
 
-Set `OPENAI_API_KEY` and `OPENAI_MODEL` in the root `.env`. Restart the stack after changing them. Keep credentials out of chat, browser variables and commits. Launching an AI journey uses the configured API account; the runner caps it at 20 model calls, 40 browser steps and 180 seconds. Replays use zero model calls.
+## Optional seeded failure demonstration
 
-For the explicitly labeled seeded demonstration, start with:
+Healthy app behavior is the default. For a deliberately seeded timeout defect, stop the stack and run:
 
 ```sh
 SELLER_DEMO_DEFECT=short-save-timeout pnpm dev
 ```
 
-This local app variant aborts store saves after 700 ms. It is an intentional defect for testing, not a claim about an actual marketplace. Plain `pnpm dev` leaves this defect off unless set in `.env`. Stop the existing stack before starting another.
+The seller app visibly labels this condition and cancels store saves after 700 ms. A context delaying `/api/store` requests by 1500 ms can expose it. A blocked exploration remains inconclusive; a compatible replay of a passing path can establish the outcome failure. Do not present this seeded defect as an issue discovered in an external marketplace.
 
-In another terminal:
+`pnpm demo:seed` and `pnpm demo:investigate --scenario-id=network-onboarding --target-pack=network-delayed --control-pack=network-control` retain the earlier controlled-comparison acceptance path. Changing seller source or the defect flag invalidates old replay build identities.
 
-```sh
-pnpm demo:seed
-pnpm demo:investigate --scenario-id=network-onboarding --target-pack=network-delayed --control-pack=network-control
-```
+## Verification and data
 
-`demo:seed` creates editable example definitions and leaves existing IDs unchanged. The control and target share seller inputs, viewport and guidance; only `/api/store` request delay changes from normal to 1500 ms. The engine never branches on these task or pack IDs.
+Run targeted tests for changed components. `pnpm typecheck`, scoped eslint and both Next builds verify the integrated workspace. Playwright UI tests use intercepted or isolated no-model APIs; explicit live scripts use OpenAI. The browser-seller integration test requires the seller app running.
 
-For manual testing at http://127.0.0.1:3000:
-
-1. Select **Store setup under delayed requests** and **Seller · normal requests**, then **Launch run**. Expect independent assertions to pass and recorded browser evidence.
-2. On that passing run, choose **Seller · delayed requests** under **Replay context**, then **Replay this path**. Expect the store outcome checks to fail, with request-delay evidence. If controls or the source build changed, expect an inconclusive replay instead.
-3. On the failed run, select the original normal-request run as **Passing control**, keep **network** selected and budget **6**, then **Investigate differences**. Expected seeded result: target fails twice, control passes twice, changing only network passes twice; contributing condition **network**.
-4. Open any trial's evidence. `final.png` shows the actual page; `assertions.json` and `readback.json` show independently checked values; `network.json` distinguishes HTTP errors from transport failures; download `trace.zip` for `pnpm exec playwright show-trace <file>`.
-5. Try **Update stock quantity** with **Desktop seller**. It uses the same engine and its own configured input and persisted-state assertions. No engine change is needed to duplicate/edit the scenario or context.
-
-An AI agent may get stuck. Such a run stays **inconclusive**, even if the goal is unmet. Use a passed path's replay under the target context to corroborate an outcome; the product does not relabel the blocked AI attempt as a verified defect. Changing seller source invalidates previously recorded replays; create a fresh passing run.
+SQLite databases are in `.data/`; evidence is in `artifacts/`. These, `.env`, project plans and local execution notes are ignored by Git. No production data migration, push, merge or deployment is implied. AWS deployment is the final planned stage after local acceptance.

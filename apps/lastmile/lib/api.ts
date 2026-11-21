@@ -1,5 +1,7 @@
 import type { EvidenceRun, InvestigationRecord, InvestigationRequest } from '@lastmile/contracts/runtime';
-import type { ContextPack, RunRequest, ScenarioDefinition } from '@lastmile/contracts';
+import type { GenerateStudyRequestSchema, LaunchStudyRequestSchema, SaveStudyRequestSchema, Study, StudyApplication, StudyExecution, StudyExecutionDetail } from '@lastmile/contracts/studies';
+import type { infer as Infer } from 'zod';
+import type { ContextPack, ScenarioDefinition } from '@lastmile/contracts';
 
 export type Health = { status: 'ok'; modelConfigured: boolean; executionReady: boolean };
 export type CapabilityInfo = { factor: string; mode?: string; description?: string; [k: string]: unknown };
@@ -29,6 +31,14 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 }
 
 export const api = {
+  applications: () => call<StudyApplication[]>('GET', 'applications'),
+  studies: () => call<Study[]>('GET', 'studies'),
+  study: (id: string) => call<Study>('GET', `studies/${encodeURIComponent(id)}`),
+  generateStudy: (request: Infer<typeof GenerateStudyRequestSchema>) => call<Study>('POST', 'studies/generate', request),
+  saveStudy: (id: string, request: Infer<typeof SaveStudyRequestSchema>) => call<Study>('PUT', `studies/${encodeURIComponent(id)}`, request),
+  launchStudy: (id: string, request: Infer<typeof LaunchStudyRequestSchema>) => call<StudyExecution>('POST', `studies/${encodeURIComponent(id)}/launch`, request),
+  executions: () => call<StudyExecution[]>('GET', 'study-executions'),
+  execution: (id: string) => call<StudyExecutionDetail>('GET', `study-executions/${encodeURIComponent(id)}`),
   replay:(id:string,request:{requestId:string;contextPackId:string;contextRevision:number})=>call<{id:string;status:string}>('POST',`runs/${encodeURIComponent(id)}/replay`,request),
   investigations:()=>call<InvestigationRecord[]>('GET','investigations'),
   investigate:(request:InvestigationRequest)=>call<InvestigationRecord>('POST','investigations',request),
@@ -43,7 +53,6 @@ export const api = {
   runs: () => call<EvidenceRun[]>('GET', 'runs'),
   run: (id: string) => call<EvidenceRun>('GET', `runs/${encodeURIComponent(id)}`),
   artifacts: (id: string) => call<unknown[]>('GET', `runs/${encodeURIComponent(id)}/artifacts`),
-  startRun: (r: RunRequest) => call<{ id: string; status: string }>('POST', 'runs', r),
 };
 
 /** Small load helper with explicit loading/error state. */

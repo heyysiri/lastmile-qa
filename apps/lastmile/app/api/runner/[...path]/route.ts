@@ -23,7 +23,9 @@ async function handle(req: Request, ctx: { params: Promise<{ path: string[] }> }
     headers.set('content-type', 'application/json');
   }
   try {
-    const upstream = await fetch(`${base}${target}${url.search}`, { method, headers, body, cache: 'no-store', signal: AbortSignal.timeout(15000) });
+    // Generation includes browser observations and a bounded provider call.
+    const timeout = method === 'POST' && target === '/api/studies/generate' ? 120_000 : 15_000;
+    const upstream = await fetch(`${base}${target}${url.search}`, { method, headers, body, cache: 'no-store', signal: AbortSignal.timeout(timeout) });
     const data = await upstream.arrayBuffer();
     return new Response(data, { status: upstream.status, headers: { 'content-type': upstream.headers.get('content-type') ?? 'application/json', 'cache-control': 'no-store' } });
   } catch (e) {

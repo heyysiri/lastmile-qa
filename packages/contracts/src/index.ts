@@ -45,6 +45,7 @@ export const ContextPackSchema = z.object({
   locale: z.string().refine(value => { try { return Intl.getCanonicalLocales(value).length === 1; } catch { return false; } }, 'Invalid locale'),
   preferredLanguage: z.string().min(1).max(80), familiarity: z.enum(['first_time', 'experienced']),
   knownTerms: z.array(z.string().max(100)).max(30).default([]),
+  background: z.string().trim().min(1).max(2000).optional(),
   interaction: z.enum(['pointer', 'keyboard_only']), reducedMotion: z.enum(['no-preference', 'reduce']),
   network: z.discriminatedUnion('mode', [
     z.object({ mode: z.literal('normal') }).strict(),

@@ -4,6 +4,7 @@ import { isAbsolute, relative, resolve, sep } from 'node:path';
 import Fastify from 'fastify';
 import type { ZodType } from 'zod';
 import { InvestigationRequestSchema, ReplayRequestSchema, type EvidenceRun, type ReplayPlan } from '@lastmile/contracts/runtime';
+import type { GenerateStudy, StudyApplication, StudyUser } from '@lastmile/contracts/studies';
 import { compileInputs } from '@lastmile/contracts';
 import { readArtifact, hashValue } from './artifacts';
 import { buildReplay } from './replay';
@@ -13,6 +14,7 @@ import {
 } from '@lastmile/contracts';
 import { executeRun, type ExecuteRun } from './execution';
 import { openRunStore, RunnerError } from './store';
+import { registerStudyRoutes } from './study-routes';
 
 export type ServerOptions = {
   databasePath: string;
@@ -22,6 +24,9 @@ export type ServerOptions = {
   modelConfigured?: boolean;
   executeRun?: ExecuteRun;
   getBuildId?:()=>Promise<string>;
+  applications?: StudyApplication[];
+  generateStudy?: GenerateStudy;
+  validateStudyUser?: (application: StudyApplication, user: StudyUser) => void;
   executeReplay?: (run:EvidenceRun,onUpdate:(run:RunRecord)=>void,replay:ReplayPlan)=>Promise<EvidenceRun>;
 };
 
@@ -84,18 +89,70 @@ export function createServer(options: ServerOptions) {
 
   const modelConfigured = options.modelConfigured ?? Boolean(process.env.OPENAI_API_KEY?.trim());
   const execute = options.executeRun ?? executeRun;
+  const executionMode = modelConfigured && execute !== executeRun ? 'ai_guided' : 'deterministic';
   const app = Fastify();
   const store = openRunStore(options.databasePath);
   let active: Promise<void> | undefined;
   let stopping = false;
 
+  function failRun(run: RunRecord, description: string) {
+    const current = store.getRun(run.id) ?? run;
+    store.updateRun({
+      ...current, status: 'completed', verdict: 'inconclusive',
+      findings: [...current.findings, { kind: 'environment_failure', description, evidencePaths: [] }],
+    });
+  }
+
+  async function performRun(run: RunRecord, perform: ExecuteRun) {
+    let updating = true;
+    try {
+      const result = await perform(run, update => {
+        if (updating && update.status === 'running') store.updateRun({ ...update, id: run.id });
+      });
+      if (result.status !== 'completed') throw new Error('Executor returned an unfinished run');
+      store.updateRun({ ...result, id: run.id });
+    } catch {
+      failRun(run, 'Run execution could not be completed');
+    } finally {
+      updating = false;
+    }
+  }
+
+  const claimers = [
+    () => { const run = store.claimNext(); return run && { kind: 'run' as const, run }; },
+    () => { const study = store.studies.claimNext(); return study && { kind: 'study' as const, study }; },
+    () => { const job = store.claimInvestigation(); return job && { kind: 'investigation' as const, job }; },
+  ];
+  let nextQueue = 0;
+
+  function claimWork() {
+    for (let offset = 0; offset < claimers.length; offset++) {
+      const index = (nextQueue + offset) % claimers.length;
+      const work = claimers[index]();
+      if (work) {
+        nextQueue = (index + 1) % claimers.length;
+        return work;
+      }
+    }
+  }
+
   async function drain() {
     try {
       while (!stopping) {
-        const run = store.claimNext();
-        if (!run) {
-          const job=store.claimInvestigation();
-          if(!job) break;
+        const work = claimWork();
+        if (!work) break;
+        if (work.kind === 'study') {
+          const { execution, origin, runs } = work.study;
+          if (origin === sellerDemoUrl.origin) {
+            await Promise.all(runs.map(run => performRun(run, execute)));
+          } else {
+            for (const run of runs) failRun(run, 'The connected application origin changed after launch');
+          }
+          store.studies.finishExecution(execution);
+          continue;
+        }
+        if (work.kind === 'investigation') {
+          const { job } = work;
           try {
             const target=requireRun(job.request.targetRunId) as EvidenceRun,control=requireRun(job.request.controlRunId) as EvidenceRun;
             if(!options.executeReplay)throw new Error('Replay execution is unavailable');
@@ -118,26 +175,12 @@ export function createServer(options: ServerOptions) {
           }catch{store.updateInvestigation({...job,status:'completed',error:'Investigation could not establish a valid matched comparison. Check completed target/control evidence, matching scenario/build and configured factors.'});}
           continue;
         }
-        let updating = true;
-        try {
-          const replay=(run as EvidenceRun).replay;
-          const perform=replay&&options.executeReplay ? (r:RunRecord,u:(r:RunRecord)=>void)=>options.executeReplay!(r,u,replay) : execute;
-          const result = await perform(run, (update) => {
-            if (updating && update.status === 'running') store.updateRun({ ...update, id: run.id });
-          });
-          if (result.status !== 'completed') throw new Error('Executor returned an unfinished run');
-          store.updateRun({ ...result, id: run.id });
-        } catch {
-          const current = store.getRun(run.id) ?? run;
-          store.updateRun({
-            ...current, status: 'completed', verdict: 'inconclusive',
-            findings: [...current.findings, {
-              kind: 'environment_failure', description: 'Run execution could not be completed', evidencePaths: [],
-            }],
-          });
-        } finally {
-          updating = false;
-        }
+        const { run } = work;
+        const replay = run.replay;
+        const perform: ExecuteRun = replay && options.executeReplay
+          ? (record, update) => options.executeReplay!(record, update, replay)
+          : execute;
+        await performRun(run, perform);
       }
     } catch {
       app.log.error('Runner queue processing failed');
@@ -186,6 +229,15 @@ export function createServer(options: ServerOptions) {
     status: 'ok', modelConfigured, executionReady: execute !== executeRun,
   }));
   app.get('/api/capabilities', async () => capabilities);
+  registerStudyRoutes(app, store.studies, {
+    applications: options.applications ?? [],
+    generateStudy: options.generateStudy,
+    validateStudyUser: options.validateStudyUser,
+    getBuildId: options.getBuildId,
+    origin: sellerDemoUrl.origin,
+    executionMode,
+    startWorker,
+  });
 
   function parseScenario(body: unknown) {
     const scenario = parse(ScenarioSchema, body);
@@ -225,7 +277,7 @@ export function createServer(options: ServerOptions) {
   app.post('/api/runs', async (request, reply) => {
     const run = store.enqueue(
       parse(RunRequestSchema, request.body), sellerDemoUrl.href,
-      modelConfigured && execute !== executeRun ? 'ai_guided' : 'deterministic',
+      executionMode,
       await options.getBuildId?.(),
     );
     startWorker();

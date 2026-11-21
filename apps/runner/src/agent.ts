@@ -69,7 +69,7 @@ export async function runAgent(
     const { tool: discriminator, ...fields } = schema.shape;
     const name = discriminator.value;
     const slots = Object.keys(run.inputs);
-    const value = slots.length ? z.union([z.object({input:z.enum(slots as [string,...string[]]).describe('Exact slot NAME, not its value')}).strict(),z.object({literal:z.union([z.string(),z.number(),z.boolean()])}).strict()]) : z.object({literal:z.union([z.string(),z.number(),z.boolean()])}).strict();
+    const value = slots.length ? z.object({input:z.enum(slots as [string,...string[]]).describe('Exact reviewed slot NAME; values cannot be substituted')}).strict() : z.object({literal:z.union([z.string(),z.number(),z.boolean()])}).strict();
     const inputSchema = name === 'fill' || name === 'select' ? z.strictObject({...fields,value}) : z.strictObject(fields);
     return tool({
       name, description: descriptions[name], inputSchema,
@@ -116,12 +116,12 @@ export async function runAgent(
     }
   });
 
-  const { preferredLanguage, familiarity, knownTerms, interaction } = run.context;
+  const { preferredLanguage, familiarity, knownTerms, interaction, background } = run.context;
   try {
     const observation = await session.observe();
     await agent.invoke(JSON.stringify({
       observation, inputReferences: Object.keys(run.inputs).map(name=>({input:name})),
-      goal: run.scenario.goal, inputs: run.inputs, preferredLanguage, familiarity, knownTerms, interaction,
+      goal: run.scenario.goal, inputs: run.inputs, preferredLanguage, familiarity, knownTerms, interaction, background,
     }), { cancelSignal: signal, limits: { turns: modelLimit } });
   } catch {
     providerFailed = true;

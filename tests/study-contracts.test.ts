@@ -8,6 +8,7 @@ it('compiles generated goals and inputs against the registered outcome contract'
  const parsed=validateStudyDraft(draft,app,1);const compiled=compileStudyUser(parsed.users[0],app);
  expect(compiled.scenario.goal).toBe(user.goal);expect(compiled.scenario.contract).toEqual(storeScenario.contract);
  expect(compiled.inputs.storeName).toBe('Siri Crafts');
+ expect(compiled.context.background).toBe(user.summary);
 });
 it('rejects unsupported workflows, missing inputs, wrong counts and duplicate effective users',()=>{
  expect(()=>validateStudyDraft({...draft,users:[{...user,workflowId:'invented'}]},app,1)).toThrow();

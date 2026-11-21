@@ -3,6 +3,8 @@ import { fileURLToPath } from 'node:url';
 import { config } from 'dotenv';
 import { createServer } from './server';
 import { createJourneyExecutor } from './journey';
+import { createApplications, validateApplicationInputValues } from './applications';
+import { createStudyGenerator } from './study-generator';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 config({ path: resolve(root, '.env'), quiet: true });
@@ -10,6 +12,9 @@ config({ path: resolve(root, '.env'), quiet: true });
 try {
   const journey = createJourneyExecutor({origin:process.env.SELLER_DEMO_URL || 'http://127.0.0.1:3001',artifactRoot:resolve(root,process.env.ARTIFACT_ROOT || 'artifacts/runs'),testToken:process.env.TEST_API_TOKEN || 'local-development-test',apiKey:process.env.OPENAI_API_KEY,model:process.env.OPENAI_MODEL || 'gpt-4.1-mini'});
   const app = createServer({
+    validateStudyUser: validateApplicationInputValues,
+    applications: createApplications(process.env.SELLER_DEMO_URL || 'http://127.0.0.1:3001'),
+    generateStudy: createStudyGenerator({ apiKey: process.env.OPENAI_API_KEY, model: process.env.OPENAI_MODEL || 'gpt-4.1-mini', testToken: process.env.TEST_API_TOKEN || 'local-development-test' }),
     databasePath: resolve(root, process.env.QA_DATABASE_PATH || '.data/qa.sqlite'),
     artifactRoot: resolve(root, process.env.ARTIFACT_ROOT || 'artifacts/runs'),
     sellerDemoUrl: process.env.SELLER_DEMO_URL,

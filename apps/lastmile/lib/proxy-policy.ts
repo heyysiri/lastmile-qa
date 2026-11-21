@@ -13,14 +13,15 @@ export function resolveProxyTarget(method: string, segments: readonly string[]):
   const path = `/api/${segments.join('/')}`;
   const n = segments.length;
   if (method === 'GET') {
-    if (n === 1 && ['health', 'capabilities', 'scenarios', 'context-packs', 'runs', 'investigations'].includes(head)) return path;
-    if (n === 2 && ['scenarios', 'context-packs', 'runs', 'investigations'].includes(head) && id) return path;
+    if (n === 1 && ['health', 'capabilities', 'scenarios', 'context-packs', 'runs', 'investigations', 'applications', 'studies', 'study-executions'].includes(head)) return path;
+    if (n === 2 && ['scenarios', 'context-packs', 'runs', 'investigations', 'studies', 'study-executions'].includes(head) && id) return path;
     if (n === 3 && head === 'runs' && tail === 'artifacts') return path;
     return null;
   }
   if (method === 'POST' && n === 3 && head === 'runs' && tail === 'replay') return path;
+  if (method === 'POST' && head === 'studies' && ((n === 2 && id === 'generate') || (n === 3 && tail === 'launch'))) return path;
   if (method === 'POST') return n === 1 && ['scenarios', 'context-packs', 'runs', 'investigations'].includes(head) ? path : null;
-  if (method === 'PUT') return n === 2 && ['scenarios', 'context-packs'].includes(head) ? path : null;
+  if (method === 'PUT') return n === 2 && ['scenarios', 'context-packs', 'studies'].includes(head) ? path : null;
   return null;
 }
 

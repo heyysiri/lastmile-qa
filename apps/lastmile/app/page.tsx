@@ -1,2 +1,2 @@
-import { RunLauncher } from '../components/RunLauncher';
-export default function Page() { return <RunLauncher />; }
+import { StudyComposer } from '../components/StudyComposer';
+export default function Page() { return <StudyComposer />; }

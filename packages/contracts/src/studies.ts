@@ -23,7 +23,7 @@ export function compileStudyUser(user:StudyUser,application:StudyApplication){
  const workflow=application.workflows.find(w=>w.id===user.workflowId);
  if(!workflow)throw new Error('Choose a supported application workflow');
  const scenario:ScenarioDefinition={...structuredClone(workflow.scenario),id:user.id,revision:1,label:`${user.name}: ${workflow.scenario.label}`.slice(0,120),goal:user.goal};
- const context=structuredClone(user.context);
+ const context={...structuredClone(user.context),background:user.summary};
  const inputs=compileInputs(scenario,context);
  if(Object.values(inputs).some(v=>typeof v==='object'))throw new Error('File fixtures are not supported yet');
  return {scenario,context,inputs};

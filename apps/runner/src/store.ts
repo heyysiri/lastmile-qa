@@ -6,6 +6,7 @@ import { ZodError } from 'zod';
 import type { EvidenceRun, InvestigationRecord, InvestigationRequest, ReplayPlan } from '@lastmile/contracts/runtime';
 import { compileInputs, type RunRecord, type RunRequest, type ContextPack } from '@lastmile/contracts';
 import { desktopContext, inventoryScenario, mobileContext, storeScenario } from '@lastmile/contracts/examples';
+import { createStudyStore } from './study-store';
 
 export class RunnerError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) {
@@ -95,18 +96,37 @@ export function openRunStore(path: string) {
     'SELECT data, request_json FROM runs WHERE request_id = ?',
   );
   const findRunning = db.prepare<[], JsonRow>("SELECT data FROM runs WHERE status = 'running'");
-  const nextQueued = db.prepare<[], JsonRow>("SELECT data FROM runs WHERE status = 'queued' ORDER BY rowid LIMIT 1");
   const runHistory = db.prepare<[], JsonRow>('SELECT data FROM runs ORDER BY rowid DESC');
 
-  function getRun(id: string): RunRecord | undefined {
+  function getRun(id: string): EvidenceRun | undefined {
     const row = findRun.get(id);
-    return row && decode<RunRecord>(row);
+    return row && decode<EvidenceRun>(row);
   }
 
-  function save(run: RunRecord) {
+  function save(run: EvidenceRun) {
     writeRun.run(run.status, JSON.stringify(run), run.id);
     return run;
   }
+
+  function enqueueRun(requestId: string, requestJson: string, manifest: Pick<EvidenceRun,
+    'scenario' | 'context' | 'inputs' | 'executionMode' | 'expectedBuildId'> & { sellerDemoUrl: string }) {
+    const { scenario, context, inputs, executionMode, expectedBuildId } = manifest;
+    const run: EvidenceRun = {
+      id: randomUUID(), requestId, scenario, context, inputs, executionMode, expectedBuildId,
+      manifestHash: createHash('sha256').update(canonicalJson(manifest)).digest('hex'),
+      status: 'queued', verdict: null, createdAt: new Date().toISOString(),
+      steps: [], assertions: [], findings: [], capabilities: [], artifacts: [],
+    };
+    insertRun.run(run.id, requestId, requestJson, run.status, JSON.stringify(run));
+    return run;
+  }
+
+  const studies = createStudyStore(db, { enqueue: enqueueRun, get: getRun, save, hasRunning: () => Boolean(findRunning.get()) });
+  const nextQueued = db.prepare<[], JsonRow>(`
+    SELECT data FROM runs WHERE status = 'queued'
+      AND NOT EXISTS (SELECT 1 FROM study_runs WHERE run_id = runs.id)
+    ORDER BY rowid LIMIT 1
+  `);
 
   db.transaction(() => {
     if (!db.prepare('SELECT 1 FROM revisions LIMIT 1').get()) {
@@ -121,6 +141,7 @@ export function openRunStore(path: string) {
   const listInvestigations=()=>db.prepare<[],JsonRow>('SELECT data FROM investigations ORDER BY rowid DESC').all().map(decode<InvestigationRecord>);
   const saveInvestigation=(record:InvestigationRecord)=>{db.prepare('UPDATE investigations SET data = ? WHERE id = ?').run(JSON.stringify(record),record.id);return record;};
   const recoverInterrupted = db.transaction(() => {
+    studies.recoverInterrupted();
     for(const record of listInvestigations()) if(record.status==='running') saveInvestigation({...record,status:'interrupted',error:'Runner restarted during investigation'});
     for (const row of findRunning.all()) {
       const run = decode<RunRecord>(row);
@@ -135,6 +156,7 @@ export function openRunStore(path: string) {
 
   return {
     recoverInterrupted,
+    studies,
     getInvestigation:(id:string)=>{const row=findInvestigation.get(id);return row?decode<InvestigationRecord>(row):undefined;},
     listInvestigations,
     enqueueInvestigation:db.transaction((request:InvestigationRequest)=>{
@@ -172,15 +194,7 @@ export function openRunStore(path: string) {
       }
 
       if(Object.values(inputs).some(value=>typeof value==='object')) throw new RunnerError(400,'unsupported_fixture','File fixtures are not registered for this project');
-      const manifest = { scenario, context, inputs, executionMode, sellerDemoUrl, expectedBuildId };
-      const run: EvidenceRun = {
-        id: randomUUID(), requestId: request.requestId, scenario, context, inputs, executionMode, expectedBuildId,
-        manifestHash: createHash('sha256').update(canonicalJson(manifest)).digest('hex'),
-        status: 'queued', verdict: null, createdAt: new Date().toISOString(),
-        steps: [], assertions: [], findings: [], capabilities: [], artifacts: [],
-      };
-      insertRun.run(run.id, request.requestId, requestJson, run.status, JSON.stringify(run));
-      return run;
+      return enqueueRun(request.requestId, requestJson, { scenario, context, inputs, executionMode, sellerDemoUrl, expectedBuildId });
     }).immediate,
     enqueueReplay:db.transaction((requestId:string,source:EvidenceRun,context:ContextPack,replay:ReplayPlan)=>{
       const requestJson=canonicalJson({requestId,sourceId:source.id,contextId:context.id,contextRevision:context.revision,replayHash:replay.hash});
