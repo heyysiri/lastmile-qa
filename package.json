@@ -14,7 +14,10 @@
     "lint": "eslint .",
     "demo:seed": "tsx scripts/seed-demo.ts",
     "demo:study": "tsx scripts/demo-study.ts",
-    "demo:investigate": "tsx scripts/demo-investigate.ts"
+    "demo:investigate": "tsx scripts/demo-investigate.ts",
+    "oscar:setup": "node scripts/setup-oscar.mjs",
+    "oscar:start": "ENABLE_TEST_API=true TEST_API_TOKEN=local-development-test .local-work/p2/oscar-venv/bin/python integrations/oscar/manage.py runserver 127.0.0.1:8000 --noreload",
+    "oscar:test": ".local-work/p2/oscar-venv/bin/python integrations/oscar/manage.py test test_bridge"
   },
   "dependencies": {
     "@strands-agents/sdk": "1.26.0",

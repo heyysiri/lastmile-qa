@@ -1,3 +1,4 @@
+import {validateOscarInputs} from './oscar-application';
 import { desktopContext, inventoryScenario, storeScenario } from '@lastmile/contracts/examples';
 import type { StudyApplication, StudyUser } from '@lastmile/contracts/studies';
 import { z } from 'zod';
@@ -43,7 +44,7 @@ export function createApplications(origin: string): StudyApplication[] {
 
 /** Apply value limits that the shared workflow contract cannot represent. */
 export function validateApplicationInputValues(application: StudyApplication, user: StudyUser): void {
-  if (application.id !== seller.id) return;
+  if (application.id !== seller.id) return validateOscarInputs(application, user);
   const workflow = workflows.find(({ scenario }) => scenario.id === user.workflowId);
   if (workflow && !workflow.inputs.safeParse(user.context.inputs).success) {
     throw new Error('The model returned invalid workflow inputs. Generate the study again.');

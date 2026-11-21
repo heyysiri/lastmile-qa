@@ -30,3 +30,12 @@ it('declares preservation intent on the profile workflow, not on an arbitrary us
  expect(profile.preserveStatePaths).toEqual(['inventory.0.quantity']);
  expect(app.workflows.find(w=>w.id==='inventory-update')!.preserveStatePaths??[]).toEqual([]);
 });
+it('focuses a large source excerpt on the configured implementation while hashing the complete file',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'context-focus-'));
+ try{
+  await writeFile(join(root,'views.py'),'# imports\n'.repeat(400)+'class ProfileUpdateView:\n    save_profile()\n');
+  const read=createApplicationContextReader(root,{[app.id]:[{kind:'code',path:'views.py',focus:'class ProfileUpdateView:'}]});
+  const result=await read(app);expect(result.sources[0].excerpt).toContain('save_profile()');
+  await expect(createApplicationContextReader(root,{[app.id]:[{kind:'code',path:'views.py',focus:'missing class'}]})(app)).rejects.toThrow();
+ }finally{await rm(root,{recursive:true,force:true});}
+});

@@ -3,7 +3,7 @@ import {isAbsolute,relative,resolve,sep} from 'node:path';
 import type {StudyApplication} from '@lastmile/contracts/studies';
 import type {ApplicationContext,ApplicationContextSource} from '@lastmile/contracts/populations';
 import {hashValue} from './artifacts';
-type Source=Pick<ApplicationContextSource,'kind'|'path'>;
+type Source=Pick<ApplicationContextSource,'kind'|'path'>&{focus?:string};
 /** Repository sources are configured by the application adapter, never by page content or the actor. */
 export function createApplicationContextReader(root:string,sourcesByApplication:Record<string,Source[]>){
  return async(application:StudyApplication):Promise<ApplicationContext>=>{
@@ -18,8 +18,10 @@ export function createApplicationContextReader(root:string,sourcesByApplication:
    const info=await stat(path);
    if(!info.isFile()||info.size>128*1024)throw new Error('Context source exceeds readable limit');
    const content=await readFile(path,'utf8');
+   const start=source.focus===undefined?0:content.indexOf(source.focus);
+   if(start<0)throw new Error('Configured source focus was not found');
    if(Buffer.byteLength(content)>128*1024)throw new Error('Context source exceeds readable limit');
-   return {...source,digest:hashValue(content),excerpt:content.slice(0,2000)};
+   return {kind:source.kind,path:source.path,digest:hashValue(content),excerpt:content.slice(start,start+2000)};
   }));
   return {applicationId:application.id,version:hashValue(sources.map(({kind,path,digest})=>({kind,path,digest}))),capturedAt:new Date().toISOString(),sources};
  };

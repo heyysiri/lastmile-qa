@@ -16,3 +16,7 @@ dev-flow.md
 playwright-report/
 test-results/
 .DS_Store
+
+# Local Python application adapter artifacts
+__pycache__/
+.pytest_cache/
