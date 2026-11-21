@@ -40,6 +40,7 @@ it('requires bearer authentication except on health and checks mutation origins'
   const app = setup();
   expect((await app.inject('/api/health')).json()).toEqual({
     status: 'ok', modelConfigured: false, executionReady: false, suggestionsReady: false, repairsReady: false,
+    projectDiscoveryReady: false, projectExecutionReady: false, projectRepairsReady: false,
   });
   expect((await app.inject('/api/scenarios')).statusCode).toBe(401);
   expect((await app.inject({ url: '/api/capabilities', headers })).json()).toEqual(
