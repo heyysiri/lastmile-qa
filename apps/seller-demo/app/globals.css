@@ -17,6 +17,7 @@ nav a { padding: 0.5rem 0.875rem; border-radius: 6px; color: var(--muted); text-
 nav a[aria-current="page"] { background: var(--tint); color: var(--blue-dark); }
 nav a:hover { color: var(--ink); }
 main { width: 100%; max-width: 64rem; margin: 0 auto; padding: 2rem 1rem 4rem; }
+.defect-banner { margin: 0 0 1rem; padding: 0.75rem 1rem; color: var(--danger); background: var(--surface); border: 1px solid var(--danger); border-radius: 6px; }
 h1 { font-size: clamp(1.5rem, 2.5vw + 1rem, 2.125rem); line-height: 1.2; margin: 0 0 0.5rem; letter-spacing: -0.02em; }
 .lede { color: var(--muted); max-width: 60ch; margin: 0 0 1.75rem; }
 .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1.5rem; max-width: 36rem; }

@@ -1,5 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
-import { FIXTURES, NotFoundError, SellerStore, ValidationError, type FixtureId } from './store';
+import { RESET_STOCK_DEFECT } from './config';
+import { ConflictError, CorruptCheckpointError, FIXTURES, NotFoundError, SellerStore, ValidationError, type FixtureId } from './store';
 
 export const SESSION_COOKIE = 'seller_session';
 type Env = Record<string, string | undefined>;
@@ -7,6 +8,16 @@ type Env = Record<string, string | undefined>;
 const reply = (status: number, body: unknown, headers?: Record<string, string>) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...headers } });
 const fail = (status: number, code: string, message: string) => reply(status, { code, message });
+
+function requireKey(value: unknown, field: string): string {
+  if (typeof value !== 'string' || value.length > 200 || !value.trim()) {
+    throw new ValidationError(`${field} must be a nonblank string of up to 200 characters`);
+  }
+  return value;
+}
+
+const sessionPayload = ({ namespaceId, token }: { namespaceId: string; token: string }) =>
+  ({ namespaceId, cookie: { name: SESSION_COOKIE, value: token, path: '/' } });
 
 async function readJson(req: Request): Promise<Record<string, unknown> | null> {
   try {
@@ -41,13 +52,16 @@ export function createApi({ store, env, getBuildId }: { store: SellerStore; env:
     if (!expected || !m || !same(m[1], expected)) return fail(401, 'unauthorized', 'Missing or invalid test token');
     return null;
   }
-  const guarded = (fn: (req: Request) => Promise<Response> | Response) => async (req: Request) => {
-    try { return await fn(req); } catch (e) {
-      if (e instanceof ValidationError) return fail(400, 'validation_error', e.message);
-      if (e instanceof NotFoundError) return fail(404, 'not_found', e.message);
-      throw e;
-    }
-  };
+  const guarded = <Args extends unknown[]>(fn: (req: Request, ...args: Args) => Promise<Response> | Response) =>
+    async (req: Request, ...args: Args) => {
+      try { return await fn(req, ...args); } catch (e) {
+        if (e instanceof ValidationError) return fail(400, 'validation_error', e.message);
+        if (e instanceof NotFoundError) return fail(404, 'not_found', e.message);
+        if (e instanceof ConflictError) return fail(409, 'conflict', e.message);
+        if (e instanceof CorruptCheckpointError) return fail(500, 'corrupt_checkpoint', e.message);
+        throw e;
+      }
+    };
   const session = (req: Request) => {
     const token = cookieValue(req, SESSION_COOKIE);
     return token ? store.resolveSession(token) : null;
@@ -56,6 +70,7 @@ export function createApi({ store, env, getBuildId }: { store: SellerStore; env:
     const ns = session(req);
     return ns ? fn(ns, req) : fail(401, 'unauthorized', 'No demo session. Start a demo session first.');
   });
+  const resetStock = () => env.SELLER_DEMO_DEFECT === RESET_STOCK_DEFECT;
 
   return {
     testSessions: guarded(async (req) => {
@@ -63,8 +78,29 @@ export function createApi({ store, env, getBuildId }: { store: SellerStore; env:
       const body = await readJson(req);
       const fixtureId = body?.fixtureId;
       if (!FIXTURES.includes(fixtureId as FixtureId)) return fail(400, 'validation_error', "fixtureId must be 'fresh-seller' or 'active-seller'");
-      const { namespaceId, token } = store.createSession(fixtureId as FixtureId);
-      return reply(201, { namespaceId, cookie: { name: SESSION_COOKIE, value: token, path: '/' } });
+      return reply(201, sessionPayload(store.createSession(fixtureId as FixtureId)));
+    }),
+    testAccountSession: guarded(async (req) => {
+      const denied = guardTest(req); if (denied) return denied;
+      const body = await readJson(req);
+      const accountKey = requireKey(body?.accountKey, 'accountKey');
+      const fixtureId = body?.fixtureId;
+      if (!FIXTURES.includes(fixtureId as FixtureId)) return fail(400, 'validation_error', "fixtureId must be 'fresh-seller' or 'active-seller'");
+      return reply(200, sessionPayload(store.openAccount(accountKey, fixtureId as FixtureId)));
+    }),
+    testCheckpoint: guarded(async (req) => {
+      const denied = guardTest(req); if (denied) return denied;
+      const body = await readJson(req);
+      const namespaceId = requireKey(body?.namespaceId, 'namespaceId');
+      const requestId = requireKey(body?.requestId, 'requestId');
+      return reply(200, store.captureCheckpoint(namespaceId, requestId));
+    }),
+    testCheckpointClone: guarded(async (req, id: string) => {
+      const denied = guardTest(req); if (denied) return denied;
+      const body = await readJson(req);
+      const cloneKey = requireKey(body?.cloneKey, 'cloneKey');
+      const clone = store.cloneCheckpoint(requireKey(id, 'id'), cloneKey);
+      return reply(200, { ...sessionPayload(clone), digest: clone.digest });
     }),
     testState: guarded((req) => {
       const denied = guardTest(req); if (denied) return denied;
@@ -74,7 +110,9 @@ export function createApi({ store, env, getBuildId }: { store: SellerStore; env:
     }),
     testBuild: guarded(async (req) => {
       const denied = guardTest(req); if (denied) return denied;
-      return reply(200, { buildId: getBuildId ? await getBuildId() : env.SELLER_BUILD_ID || 'seller-demo-local' });
+      const label = env.SELLER_BUILD_ID || 'seller-demo-local';
+      const buildId = getBuildId ? await getBuildId() : label + (resetStock() ? `:${RESET_STOCK_DEFECT}` : '');
+      return reply(200, { buildId });
     }),
     /** Public local-demo flow: creates an isolated namespace and sets an HttpOnly cookie. */
     startSession: guarded(async (req) => {
@@ -89,7 +127,7 @@ export function createApi({ store, env, getBuildId }: { store: SellerStore; env:
     putStore: withSession(async (ns, req) => {
       const body = await readJson(req);
       if (!body) return fail(400, 'validation_error', 'Send a JSON object with a name');
-      return reply(200, { store: store.saveStoreName(ns, body.name) });
+      return reply(200, { store: store.saveStoreName(ns, body.name, resetStock()) });
     }),
     getInventory: withSession((ns) => reply(200, { inventory: store.getState(ns).inventory })),
     putInventory: withSession(async (ns, req) => {

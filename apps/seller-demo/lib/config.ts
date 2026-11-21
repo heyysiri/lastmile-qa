@@ -1,6 +1,8 @@
 import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
+export const RESET_STOCK_DEFECT = 'reset-stock-on-store-save';
+
 /** Walk up from `start` to the directory holding pnpm-workspace.yaml. */
 export function findRepoRoot(start: string): string {
   let dir = resolve(start);
