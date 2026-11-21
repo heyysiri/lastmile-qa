@@ -19,7 +19,10 @@ export type RepairPatchPolicy = {
 
 const proposalSchema = z.object({
   summary: z.string().trim().min(1).max(4000),
-  changes: z.array(z.object({ path: z.string().min(1), after: z.string().max(maxFileBytes) }).strict()).min(1).max(4),
+  changes: z.array(z.union([
+    z.object({ path: z.string().min(1), after: z.string().max(maxFileBytes) }).strict(),
+    z.object({ path: z.string().min(1), search: z.string().min(1).max(maxFileBytes), replace: z.string().max(maxFileBytes) }).strict(),
+  ])).min(1).max(4),
 }).strict();
 
 async function sourceFile(root: string, path: string) {
@@ -119,8 +122,16 @@ export async function createRepairPatch(tree: string, policy: RepairPatchPolicy,
     throw new Error('Proposed patch targets duplicate or protected files');
   }
   const edits = [];
-  for (const { path, after } of [...changes].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)) {
+  for (const change of [...changes].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)) {
+    const { path } = change;
     const before = await readSourceText(tree, path);
+    let after: string;
+    if ('after' in change) after = change.after;
+    else {
+      const index = before.indexOf(change.search);
+      if (index < 0 || before.indexOf(change.search, index + 1) >= 0) throw new Error('Repair replacement must match exactly once');
+      after = before.slice(0, index) + change.replace + before.slice(index + change.search.length);
+    }
     edits.push({ path, before, beforeHash: hashBytes(before), after });
   }
   validateChanges(policy, edits);

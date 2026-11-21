@@ -76,6 +76,18 @@ it('validates and applies exact reviewed content only in the supplied snapshot',
   expect(await readSourceText(root, sourcePath)).toBe(original);
 });
 
+it('assembles an exact unique replacement into a complete reviewable patch', async () => {
+  const search = "if (resetStock) this.db.prepare('UPDATE inventory SET quantity = 5 WHERE namespace_id = ?').run(namespaceId);";
+  const patch = await createRepairPatch(root, sellerPatchPolicy, { summary: 'Preserve stock', changes: [{ path: sourcePath, search, replace: 'void resetStock;' }] });
+  expect(patch.changes[0].before).toBe(original);
+  expect(patch.changes[0].after).toBe(fixed);
+  expect(await readSourceText(root, sourcePath)).toBe(original);
+});
+
+it.each(['', 'missing source text', 'namespaceId'])('rejects an absent or ambiguous exact replacement %s', async search => {
+  await expect(createRepairPatch(root, sellerPatchPolicy, { summary: 'Repair', changes: [{ path: sourcePath, search, replace: '' }] })).rejects.toThrow();
+});
+
 it('backs up live SQLite checkpoints without copying usable sessions or changing the source', async () => {
   const from = join(root, 'seller.sqlite');
   const to = join(dir, 'copy.sqlite');

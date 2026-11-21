@@ -10,6 +10,7 @@ it('registers upstream profile and basket workflows with independent preserved s
   expect(()=>compileStudyUser(user,app)).not.toThrow();expect(()=>validateOscarInputs(app,user)).not.toThrow();
  }
  expect(app.workflows[0].preserveStatePaths).toContain('basket.quantity');
+ for(const workflow of app.workflows)expect(workflow.preserveStatePaths).toContain('profile.lastName');
  expect(app.workflows[0].scenario.entryPath).toBe('/en-gb/accounts/profile/edit/');
 });
 it('rejects unsupported input values without accepting arbitrary application mutations',()=>{

@@ -43,7 +43,7 @@ try {
       artifactRoot,origin,testToken,apiKey,model,defect:oscar?process.env.OSCAR_DEMO_DEFECT:process.env.SELLER_DEMO_DEFECT},
       oscar?{adapter:createOscarRepairAdapter({bridgeRoot:resolve(root,'integrations/oscar'),python:resolve(root,'.local-work/p2/oscar-venv/bin/python')})}:undefined):undefined,
     getApplicationContext:createApplicationContextReader(applicationRoot,sources),
-    generateSuggestions:createJourneyPlanner({apiKey,model}),
+    generateSuggestions:apiKey?createJourneyPlanner({apiKey,model}):undefined,
     validateStudyUser: validateApplicationInputValues,
     applications: oscar?[createOscarApplication(origin)]:createApplications(origin),
     generateStudy: createStudyGenerator({apiKey,model,testToken}),
