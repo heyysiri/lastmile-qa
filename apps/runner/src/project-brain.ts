@@ -36,7 +36,9 @@ const submissionSchema = z.strictObject({
   journeys: z.array(z.strictObject({
     ...ProjectJourneySchema.shape,
     sources: citations(10),
-    checks: z.array(z.strictObject({ ...ProjectCheckSchema.shape, sources: citations(5) })).min(1).max(12),
+    checks: z.array(z.strictObject({ ...ProjectCheckSchema.shape,
+      phase: ProjectCheckSchema.shape.phase.describe('after_action runs once after ALL journey actions finish, on the final page. after_reload independently reopens path. preserve compares a frozen before-run value. Prefer durable saved values, never a transient toast after a journey that navigates away.'),
+      sources: citations(5) })).min(1).max(12),
   })).min(1).max(6),
 });
 type PlanDraft = Omit<ProjectPlan, 'testers'> & { testers: Omit<ProjectPlan['testers'][number], 'context'>[] };
@@ -53,6 +55,7 @@ const systemPrompt = [
   'Every sources array contains only returned citation IDs such as S1. Never reconstruct citation objects, hashes or excerpts. A check basis is requirement, test, or implementation, never a citation ID.',
   'Use visible, field, or text checks with exact observed role/name, label, text or source-backed test ID locators. Specify a readback route for after_reload and preserve. Use preserve for evidence of values that must remain unchanged.',
   'Checks describe the completed task, not intermediate screens. Prefer stable form labels with the desired value in expected; do not invent a locator from a future heading or confuse a field value with its accessible name. Input keys are simple identifiers without spaces.',
+  'after_action is evaluated once after ALL actor actions, on the final page. Do not require transient success banners or notifications that disappear on navigation or reload. The verifier handles persistence readbacks; prefer durable fields and state over confirmations.',
   'A fieldName observation is the exact HTML name of a visible form control. Use by: fieldName with that observed name when accessible labels are missing or ambiguous. Never infer a field name from a nearby label or source template.',
   'Journeys run in the submitted order and can share application data across browser profiles and accounts. Preservation compares against the value frozen before any journey runs. Choose untouched controls and leave preserve.expected unset unless a requirement specifies a fixed value.',
   'For a release revisit earlier checks and explain coverage of changed files. Explain gaps when a role, route, control, or expectation cannot be corroborated.',
