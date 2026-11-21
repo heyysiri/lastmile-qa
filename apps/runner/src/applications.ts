@@ -12,6 +12,7 @@ const seller = {
 const workflows = [
   {
     scenario: storeScenario,
+    preserveStatePaths: ['inventory.0.quantity'],
     description: 'Start with a fresh seller. Save a nonempty storeName of up to 80 characters without surrounding whitespace and confirm the store is ready.',
     inputs: z.object({ storeName: z.string().min(1).max(80).refine(name => name === name.trim()) }).strict(),
   },
@@ -30,9 +31,10 @@ export function createApplications(origin: string): StudyApplication[] {
   return [{
     ...seller,
     origin: url.origin,
-    workflows: workflows.map(({ scenario, description }) => ({
+    workflows: workflows.map(({ scenario, description, preserveStatePaths }) => ({
       id: scenario.id,
       description,
+      preserveStatePaths,
       scenario: structuredClone(scenario),
       defaultInputs: Object.fromEntries(Object.keys(scenario.inputSlots).map(slot => [slot, desktopContext.inputs[slot]])),
     })),

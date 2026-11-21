@@ -5,12 +5,14 @@ import { createServer } from './server';
 import { createJourneyExecutor } from './journey';
 import { createApplications, validateApplicationInputValues } from './applications';
 import { createStudyGenerator } from './study-generator';
+import {createPersistentSessionPreparer} from './persistent-session';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 config({ path: resolve(root, '.env'), quiet: true });
 
 try {
-  const journey = createJourneyExecutor({origin:process.env.SELLER_DEMO_URL || 'http://127.0.0.1:3001',artifactRoot:resolve(root,process.env.ARTIFACT_ROOT || 'artifacts/runs'),testToken:process.env.TEST_API_TOKEN || 'local-development-test',apiKey:process.env.OPENAI_API_KEY,model:process.env.OPENAI_MODEL || 'gpt-4.1-mini'});
+  const prepareSession=createPersistentSessionPreparer({origin:process.env.SELLER_DEMO_URL || 'http://127.0.0.1:3001',testToken:process.env.TEST_API_TOKEN || 'local-development-test'});
+  const journey = createJourneyExecutor({prepareSession,origin:process.env.SELLER_DEMO_URL || 'http://127.0.0.1:3001',artifactRoot:resolve(root,process.env.ARTIFACT_ROOT || 'artifacts/runs'),testToken:process.env.TEST_API_TOKEN || 'local-development-test',apiKey:process.env.OPENAI_API_KEY,model:process.env.OPENAI_MODEL || 'gpt-4.1-mini'});
   const app = createServer({
     validateStudyUser: validateApplicationInputValues,
     applications: createApplications(process.env.SELLER_DEMO_URL || 'http://127.0.0.1:3001'),

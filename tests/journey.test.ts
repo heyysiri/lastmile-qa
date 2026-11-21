@@ -33,3 +33,29 @@ it('keeps privileged readback outside the browser, binds namespace and persists 
   expect(mocks.session).toHaveBeenCalledTimes(1);
  }finally{await rm(directory,{recursive:true,force:true});}
 });
+
+it('persists the before-state checkpoint and hashes frozen preservation checks before browser actions',async()=>{
+ const {hashValue}=await import('../apps/runner/src/artifacts');
+ const directory=await mkdtemp(join(tmpdir(),'persistent-journey-'));
+ const run:EvidenceRun={id:'persistent-test',requestId:'test',scenario:structuredClone(storeScenario),context:desktopContext,inputs:{storeName:'Siri Crafts'},status:'running',verdict:null,createdAt:new Date().toISOString(),manifestHash:'hash',executionMode:'ai_guided',steps:[],assertions:[],findings:[],capabilities:[],artifacts:[],continuity:{populationId:'p',testerId:'t',mode:'continue',initialStateId:'fresh',workflowId:'store-setup',history:[],preserveStatePaths:['inventory.0.quantity']}};
+ vi.stubGlobal('fetch',vi.fn(async()=>Response.json({buildId:'build'})));
+ const updates:EvidenceRun[]=[];
+ mocks.session.mockImplementation(async(options)=>{
+  expect(updates[0].continuity?.startCheckpoint).toEqual({id:'cp',digest:'digest'});
+  return {page:{},execute:vi.fn(async()=>''),actions:[{action:{tool:'navigate',path:'/onboarding'},url:'/onboarding',observation:'Page'}],capabilities:[],close:async()=>writeFile(join(options.artifactDirectory,'final.png'),'image')};
+ });
+ mocks.agent.mockResolvedValue({modelCalls:1,finished:true,reason:'done'});
+ mocks.verify.mockResolvedValue([...storeScenario.contract.assertions.map(a=>({id:a.id,status:'passed'})),{id:'preserve-0',status:'failed',expected:250,actual:5}]);
+ try{
+  const executor=createJourneyExecutor({origin:'http://localhost:3001',artifactRoot:directory,testToken:'secret',model:'fake',prepareSession:async(record)=>{
+   record.continuity!.startCheckpoint={id:'cp',digest:'digest'};
+   record.scenario.contract.assertions.push({id:'preserve-0',kind:'state_equals',path:'inventory.0.quantity',expected:{literal:250}});
+   return {namespaceId:'stable-account',cookie:{name:'session',value:'secret-cookie',path:'/'}};
+  }});
+  const result=await executor(run,update=>updates.push(structuredClone(update)));
+  expect(result.verdict).toBe('failed');
+  expect(result.evidence?.scenarioHash).toBe(hashValue(result.scenario));
+  expect(result.evidence?.scenarioHash).not.toBe(hashValue(storeScenario));
+  expect(result.findings[0].description).toMatch(/inventory.0.quantity.*250.*5/);
+ }finally{await rm(directory,{recursive:true,force:true});}
+});

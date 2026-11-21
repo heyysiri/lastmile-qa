@@ -126,3 +126,12 @@ it('rejects substituted literal values and accepts only reviewed input reference
  expect(result.finished).toBe(true);
  expect(page.execute.mock.calls).toEqual([[{tool:'fill',locator:{by:'label',value:'Store name'},value:{input:'storeName'}}]]);
 });
+
+it('receives only its bounded observed history, never checkpoint or privileged requirements',async()=>{
+ let prompt='';
+ vi.spyOn(OpenAIModel.prototype,'stream').mockImplementation(async function*(messages){prompt=JSON.stringify(messages);yield* toolCalls(['finish',{status:'done'}]);});
+ const persistent:EvidenceRun={...run,continuity:{populationId:'population-internal',testerId:'tester-internal',mode:'continue',initialStateId:'fixture-internal',workflowId:'workflow-internal',preserveStatePaths:['private.requirement'],startCheckpoint:{id:'checkpoint-private',digest:'digest-private'},history:[{runId:'prior',buildId:'release-1',goal:'Update stock',observation:'Stock quantity 250; Inventory saved',recordedAt:'yesterday'}]}};
+ await runAgent(browser() as unknown as BrowserSession,persistent,options);
+ expect(prompt).toContain('Stock quantity 250');
+ expect(prompt).not.toMatch(/private.requirement|checkpoint-private|digest-private|population-internal|state_equals/);
+});

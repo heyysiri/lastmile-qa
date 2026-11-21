@@ -8,8 +8,9 @@ import { verifyOutcome } from './verifier';
 import { executeReplay, buildReplay } from './replay';
 import { hashValue, writeArtifactManifest } from './artifacts';
 import { classifyOutcome } from './outcome';
+import type {PreparedSession} from './persistent-session';
 
-export type JourneyOptions = { origin:string;artifactRoot:string;testToken:string;apiKey?:string;model:string };
+export type JourneyOptions = { origin:string;artifactRoot:string;testToken:string;apiKey?:string;model:string;prepareSession?:(run:EvidenceRun,signal:AbortSignal)=>Promise<PreparedSession> };
 export function createJourneyExecutor(options:JourneyOptions) {
   const origin=new URL(options.origin).origin;
   return async (input:RunRecord,onUpdate:(run:RunRecord)=>void,replay?:ReplayPlan):Promise<EvidenceRun> => {
@@ -35,10 +36,13 @@ export function createJourneyExecutor(options:JourneyOptions) {
       const build=await trusted('/api/test/build');
       if(typeof build.buildId!=='string'||!build.buildId) throw new Error('Missing build identity');
       if(run.expectedBuildId&&run.expectedBuildId!==build.buildId) throw new Error('Queued build changed');
-      run.evidence={buildId:build.buildId,scenarioHash:hashValue(run.scenario),policyVersion:'browser-v1',model:replay?'none':options.model,actions:[],modelCalls:0,finishedByAgent:false,...(replay?{replayHash:replay.hash,replayCompatible:false}:{})};
-      const setup=await trusted('/api/test/sessions',{fixtureId:run.scenario.initialStateId});
-      if(typeof setup.namespaceId!=='string'||typeof setup.cookie?.value!=='string'||typeof setup.cookie?.name!=='string') throw new Error('Invalid test session');
+      const setup=run.continuity
+        ? await options.prepareSession?.(run,signal)
+        : await trusted('/api/test/sessions',{fixtureId:run.scenario.initialStateId});
+      if(!setup||typeof setup.namespaceId!=='string'||typeof setup.cookie?.value!=='string'||typeof setup.cookie?.name!=='string') throw new Error('Invalid test session');
       run.namespaceId=setup.namespaceId;
+      run.evidence={buildId:build.buildId,scenarioHash:hashValue(run.scenario),policyVersion:'browser-v1',model:replay?'none':options.model,actions:[],modelCalls:0,finishedByAgent:false,...(replay?{replayHash:replay.hash,replayCompatible:false}:{})};
+      onUpdate(structuredClone(run));
       session=await createBrowserSession({pack:run.context,inputs:run.inputs,origin,cookie:setup.cookie,artifactDirectory:directory,signal,onStep:step=>{
         run.steps.push({...step,screenshot:step.screenshot?`${run.id}/${step.screenshot}`:undefined});
         onUpdate(structuredClone(run));
@@ -80,7 +84,7 @@ export function createJourneyExecutor(options:JourneyOptions) {
     run.status='completed';run.finishedAt=new Date().toISOString();
     run.verdict=classifyOutcome(run.assertions,complete);
     if(failure)run.findings.push({kind:failure,description:message,evidencePaths:[]});
-    else if(run.verdict==='failed')run.findings.push({kind:'api_or_outcome_failure',description:'Independent outcome checks did not match the configured task requirements.',evidencePaths:[`${run.id}/assertions.json`]});
+    else if(run.verdict==='failed')run.findings.push({kind:'api_or_outcome_failure',description:run.assertions.filter(a=>a.status==='failed').map(a=>{const rule=run.scenario.contract.assertions.find(r=>r.id===a.id);const label=rule&&'path' in rule?rule.path:a.id;return `${label}: expected ${JSON.stringify(a.expected)??'configured outcome'}, observed ${JSON.stringify(a.actual)??'unavailable'}.`;}).join(' '),evidencePaths:[`${run.id}/assertions.json`]});
     else if(run.verdict==='inconclusive')run.findings.push({kind:'environment_failure',description:'One or more independent checks could not be evaluated.',evidencePaths:[]});
     if(replay) await writeFile(join(directory,'replay.json'),JSON.stringify(replay,null,2));
     else if(run.verdict==='passed') await writeFile(join(directory,'replay.json'),JSON.stringify(buildReplay(run),null,2));
