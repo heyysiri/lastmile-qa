@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ArrowUpRight, FolderGit2, Plus } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ConnectProjectSchema, type ConnectProjectRequest } from '@lastmile/contracts/projects';
+import { ConnectProjectSchema, MAX_PROJECT_TESTERS, type ConnectProjectRequest } from '@lastmile/contracts/projects';
 import { api, ApiFailure, useLoad } from '../lib/api';
 import { newRequestId } from '../lib/editor';
 import { connectWasRejected, projectHref, projectRequestId } from '../lib/projects';
@@ -196,7 +196,7 @@ function ConnectProject({ ready, checkingHealth }: { ready: boolean; checkingHea
           <summary>Advanced connection setup</summary>
           <div className="project-setup">
             <h3>Development accounts</h3>
-            <p className="field-hint">Add up to three existing accounts. Each account can be assigned to one tester.</p>
+            <p className="field-hint">Add up to {MAX_PROJECT_TESTERS} existing accounts for access. Personas are generated for you. Multiple personas can share an account and business data, with separate browser storage.</p>
             {Array.from({ length: accountCount }, (_, index) => <fieldset className="plain-fieldset project-account" key={index}>
               <legend>Account {index + 1}</legend>
               <label className="field"><span>Role or label</span><input name={`label-${index}`} defaultValue={draft.current[`label-${index}`] ?? ''} autoComplete="off" required maxLength={100} /></label>
@@ -206,7 +206,7 @@ function ConnectProject({ ready, checkingHealth }: { ready: boolean; checkingHea
               </div>
             </fieldset>)}
             <div className="row">
-              {accountCount < 3 && <button type="button" className="text-button" onClick={() => setAccountCount(count => count + 1)}>Add development account</button>}
+              {accountCount < MAX_PROJECT_TESTERS && <button type="button" className="text-button" onClick={() => setAccountCount(count => count + 1)}>Add development account</button>}
               {accountCount > 0 && <button type="button" className="text-button" onClick={() => { for (const field of ['label', 'username', 'password']) delete draft.current[`${field}-${accountCount - 1}`]; setAccountCount(count => count - 1); }}>Remove last account</button>}
             </div>
             <label className="field"><span>Additional allowed origins</span><textarea name="allowedOrigins" defaultValue={draft.current.allowedOrigins ?? ''} className="short compact" placeholder="One HTTP origin per line" /></label>

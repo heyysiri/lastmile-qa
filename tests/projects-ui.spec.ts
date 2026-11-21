@@ -562,3 +562,45 @@ test('explains a blocked automatic repair instead of silently hiding the next st
   await expect(page.getByText(project.runs[0].repairBlockedReason!)).toBeVisible();
   await expect(page.getByRole('button',{name:'Prepare fix'})).toHaveCount(0);
 });
+
+test('shows generated persona rationale and multiple ordered journeys without an authoring form', async ({ page }) => {
+  const project = makeProject();
+  project.discovery!.plan.testers[0] = {
+    ...tester, selectionReason: 'Covers interrupted booking changes.',
+    context: { ...desktopContext, preferredLanguage: 'French', familiarity: 'first_time', interaction: 'keyboard_only',
+      background: 'Works the evening shift.', network: { mode: 'offline' } },
+  };
+  project.discovery!.plan.journeys = [{ ...journey, stages: [
+    { id: 'edit', label: 'Edit booking', goal: 'Change the date.', transition: 'continue' },
+    { id: 'return', label: 'Return to booking', goal: 'Check the saved date.', transition: 'reopen', pauseMs: 1500, network: { mode: 'normal' } },
+  ] }, { ...journey, id: 'read', title: 'Read the updated booking' }];
+  await mockApi(page, project);
+  await page.goto('/projects/desk');
+  await page.getByRole('tab', { name: 'Team', exact: true }).click();
+  await expect(page.getByText('Covers interrupted booking changes.', { exact: false })).toBeVisible();
+  await expect(page.getByText(/First-time user.*French.*Keyboard only/)).toBeVisible();
+  await expect(page.getByText('Works the evening shift.')).toBeHidden();
+  await page.getByText('Persona details', { exact: true }).click();
+  await expect(page.getByText('Works the evening shift.')).toBeVisible();
+  await page.getByText('Review generated journeys', { exact: true }).click();
+  await expect(page.getByText('Move a reservation', { exact: true })).toBeVisible();
+  await expect(page.getByText('Read the updated booking', { exact: true })).toBeVisible();
+  await expect(page.locator('ol.project-journeys > li > strong')).toHaveText(['Stage 1: Edit booking', 'Stage 2: Return to booking']);
+  await expect(page.getByText(/Leave and return in the same browser profile/)).toContainText('1.5 s');
+  await expect(page.getByText('Pauses are actual short interruptions, not simulated days.')).toBeVisible();
+  await expectNoOverflow(page);
+});
+
+test('allows eight access accounts and explains shared access with separate browser storage', async ({ page }) => {
+  await mockApi(page);
+  await page.goto('/');
+  await page.getByRole('button', { name: 'New project', exact: true }).click();
+  await page.getByText('Advanced connection setup', { exact: true }).click();
+  await expect(page.getByText(/Add up to 8 existing accounts for access/)).toContainText('separate browser storage');
+  for (let index = 0; index < 8; index++) await page.getByRole('button', { name: 'Add development account' }).click();
+  await expect(page.getByLabel('Username', { exact: true })).toHaveCount(8);
+  await expect(page.getByRole('button', { name: 'Add development account' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Remove last account' }).click();
+  await expect(page.getByLabel('Username', { exact: true })).toHaveCount(7);
+  await expect(page.getByRole('button', { name: 'Add development account' })).toBeVisible();
+});

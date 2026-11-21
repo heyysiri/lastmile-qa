@@ -1,6 +1,7 @@
 import type {
-  Project, ProjectCheckResult, ProjectDiscovery, ProjectFinding, ProjectRun, ProjectTester, ProjectTesterResult, SourceReference,
+  Project, ProjectCheckResult, ProjectDiscovery, ProjectFinding, ProjectJourney, ProjectRun, ProjectTester, ProjectTesterResult, SourceReference,
 } from '@lastmile/contracts/projects';
+import type { ProjectStageEvidence } from '@lastmile/contracts/runtime';
 import { displayValue, fieldName, RunScreenshot, RunSteps } from './RunEvidence';
 import { plural, TesterFace } from './Studio';
 
@@ -46,6 +47,57 @@ function duration(ms: number) {
 export function TesterAccount({ tester, accounts }: { tester: ProjectTester; accounts: Project['accounts'] }) {
   const account = tester.accountId && accounts.find(item => item.id === tester.accountId);
   return <span>{account ? `Development account: ${account.label}` : 'Browser profile'}</span>;
+}
+
+function networkDescription(network: ProjectTester['context']['network']) {
+  switch (network.mode) {
+    case 'normal': return 'Normal connection';
+    case 'offline': return 'Offline';
+    case 'request_delay': return `Requests to ${network.pathPrefix} delayed by ${duration(network.delayMs)}`;
+    case 'throttled': return `Slower connection: ${duration(network.latencyMs)} latency, ${network.downloadKbps} kbps download, ${network.uploadKbps} kbps upload`;
+  }
+}
+
+export function TesterPersona({ tester }: { tester: ProjectTester }) {
+  const context = tester.context;
+  return <>
+    <p className="tester-bio">{tester.summary}</p>
+    {tester.selectionReason && <p><strong>Why selected:</strong> {tester.selectionReason}</p>}
+    <p className="field-hint">{context.familiarity === 'first_time' ? 'First-time user' : 'Experienced user'} · {context.preferredLanguage} · {context.interaction === 'keyboard_only' ? 'Keyboard only' : 'Pointer'}<br />{networkDescription(context.network)}</p>
+    <details className="project-disclosure"><summary>Persona details</summary>
+      {context.background && <p>{context.background}</p>}
+      <dl>
+        <dt>Screen</dt><dd>{context.viewport.width} × {context.viewport.height}</dd>
+        <dt>Locale</dt><dd>{context.locale}</dd>
+        <dt>Motion</dt><dd>{context.reducedMotion === 'reduce' ? 'Reduced motion' : 'No preference'}</dd>
+        {context.knownTerms.length > 0 && <><dt>Familiar terms</dt><dd>{context.knownTerms.join(', ')}</dd></>}
+      </dl>
+    </details>
+  </>;
+}
+
+export function JourneyStages({ journey, network, evidence }: {
+  journey: ProjectJourney; network: ProjectTester['context']['network']; evidence?: ProjectStageEvidence[];
+}) {
+  if (!journey.stages?.length) return null;
+  let currentNetwork = network;
+  return <div>
+    <p className="field-hint">Pauses are actual short interruptions, not simulated days.</p>
+    <ol className="project-journeys" aria-label="Journey stages">{journey.stages.map((stage, index) => {
+      currentNetwork = stage.network ?? currentNetwork;
+      const recorded = evidence?.find(item => item.id === stage.id);
+      const behavior = recorded ?? { ...stage, network: currentNetwork };
+      return <li key={stage.id}>
+        <strong>Stage {index + 1}: {stage.label}</strong>
+        {evidence && <span className="badge">{recorded ? recorded.completed ? 'Completed' : 'Incomplete' : 'Not recorded'}</span>}
+        <p>{stage.goal}</p>
+        <p className="field-hint">{evidence && !recorded && 'Planned: '}{behavior.transition === 'reopen' ? 'Leave and return in the same browser profile' : 'Continue in the current page'}.
+          {behavior.pauseMs ? <> Pause for {duration(behavior.pauseMs)}.</> : null} {networkDescription(behavior.network)}.
+          {stage.entryPath && <> Open <code>{stage.entryPath}</code>.</>}
+        </p>
+      </li>;
+    })}</ol>
+  </div>;
 }
 
 const confidenceLabel: Record<ProjectFinding['confidence'], string> = {
@@ -112,7 +164,9 @@ export function TesterResults({ results, accounts }: { results: ProjectTesterRes
         <p><TesterAccount tester={result.tester} accounts={accounts} />{result.sessionContinued && <> · Continued browser session</>}</p>
       </div>
     </header>
-    <p>{result.journey.title}</p>
+    <details className="project-disclosure"><summary>About this tester</summary><TesterPersona tester={result.tester} /></details>
+    <p><strong>{result.journey.title}</strong></p>
+    <JourneyStages journey={result.journey} network={result.tester.context.network} evidence={result.run.evidence?.stages ?? []} />
     <ProjectChecks checks={result.checks} />
     {result.run.steps.length > 0 && <RunSteps run={result.run} />}
     {result.run.artifacts.some(path => /\.png$/i.test(path)) && <details className="project-disclosure">

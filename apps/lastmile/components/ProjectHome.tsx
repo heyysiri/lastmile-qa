@@ -9,7 +9,7 @@ import { newRequestId } from '../lib/editor';
 import { useJobPolling } from '../lib/evolution';
 import { isActive, usePendingWrite } from '../lib/populations';
 import { projectHref, projectRefreshRequest, projectRunHref } from '../lib/projects';
-import { MeasuredResults, RunFindings, SourceCitations, TesterAccount } from './ProjectEvidence';
+import { JourneyStages, MeasuredResults, RunFindings, SourceCitations, TesterAccount, TesterPersona } from './ProjectEvidence';
 import { ProjectRepairAction } from './ProjectRepairReview';
 import { StudioBack, StudioError, TesterFace } from './Studio';
 import { Pending } from './ui';
@@ -112,9 +112,10 @@ export function ProjectHome({ id }: { id: string }) {
         <TabsContent value="team">
       {plan && project.status === 'ready' && <section className="project-team" aria-labelledby="team-heading">
         <div className="project-section-heading"><h2 id="team-heading">Your test team</h2></div>
+        <p className="field-hint">Personas are generated from your app and audience. Multiple personas can share an access account and business data, with separate browser storage.</p>
         <div className="project-team-roster">{plan.testers.map((tester, i) => <article key={tester.id}>
           <TesterFace index={i} />
-          <div><h3>{tester.name}</h3><p>{tester.role}</p><p className="tester-bio">{tester.summary}</p><small><TesterAccount tester={tester} accounts={project.accounts} /></small></div>
+          <div><h3>{tester.name}</h3><p>{tester.role}</p><TesterPersona tester={tester} /><small><TesterAccount tester={tester} accounts={project.accounts} /></small></div>
         </article>)}</div>
         <div className="project-understanding">
           <div className="project-section-heading"><h2>What the team found in the app</h2></div>
@@ -125,6 +126,8 @@ export function ProjectHome({ id }: { id: string }) {
             <ul className="project-journeys">{plan.journeys.map(journey => <li key={journey.id}>
               <strong>{journey.title}</strong> <span className="muted">{plan.testers.find(tester => tester.id === journey.testerId)?.name}</span>
               <p>{journey.goal}</p>
+              <p className="field-hint">{journey.reason}</p>
+              <JourneyStages journey={journey} network={plan.testers.find(tester => tester.id === journey.testerId)!.context.network} />
               <SourceCitations sources={journey.sources} />
             </li>)}</ul>
             <details className="project-disclosure"><summary>Application map evidence</summary>
