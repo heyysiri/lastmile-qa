@@ -51,7 +51,7 @@ const execution: PopulationExecutionDetail = {
   ],
 };
 const trials: RepairTrial[] = [
-  { testerId: 'mina', role: 'regression', outcome: 'failed', message: 'The retained case still fails.', run: run('trial-mina', true) },
+  { testerId: 'mina', role: 'regression', outcome: 'failed', message: 'The retained case still fails.', run: { ...run('trial-mina', true), artifacts: ['trial-mina/final.png'] } },
   { testerId: 'leo', role: 'control', outcome: 'passed', message: 'The control still passes.', run: run('trial-leo', false) },
 ];
 
@@ -225,7 +225,7 @@ test('recovers preparation and verification across reload and shows rejected ret
   await expect(reproduction.getByText('Passing control')).toBeVisible();
   await expect(reproduction.getByText('Observed 1')).toBeVisible();
   await expect(reproduction.getByRole('link', { name: 'Original comparison evidence' }).first()).toHaveAttribute('href', '/runs/candidate-mina');
-  await expect(reproduction.getByRole('link', { name: 'Original comparison screenshot' })).toHaveAttribute('href', '/api/runner/runs/candidate-mina/artifacts/final.png');
+  await expect(reproduction.getByRole('link', { name: 'This replay’s screenshot' })).toHaveAttribute('href', '/api/runner/runs/trial-mina/artifacts/final.png');
   expect(mock.verifications).toHaveLength(0);
   await page.getByRole('button', { name: 'Verify patch' }).click();
   await expect(page.getByRole('main').getByRole('alert')).toContainText('Could not reach');

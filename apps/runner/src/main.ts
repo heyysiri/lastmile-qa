@@ -9,6 +9,8 @@ import {createPersistentSessionPreparer} from './persistent-session';
 import {createApplicationContextReader} from './application-context';
 import {createJourneyPlanner} from './journey-planner';
 import {createOscarApplication} from './oscar-application';
+import {createRepairRuntime} from './repair-runtime';
+import {createOscarRepairAdapter} from './repair-oscar';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 config({ path: resolve(root, '.env'), quiet: true });
@@ -36,6 +38,10 @@ try {
   ]};
   const journey = createJourneyExecutor({prepareSession:createPersistentSessionPreparer({origin,testToken}),origin,artifactRoot,testToken,apiKey,model});
   const app = createServer({
+    repairRuntime: apiKey ? createRepairRuntime({root:applicationRoot,workspaceRoot:resolve(root,'.data/repairs'),
+      sellerDatabasePath:resolve(root,oscar?(process.env.OSCAR_DATABASE_PATH||'.data/oscar.sqlite'):(process.env.SELLER_DATABASE_PATH||'.data/seller-demo.sqlite')),
+      artifactRoot,origin,testToken,apiKey,model,defect:oscar?process.env.OSCAR_DEMO_DEFECT:process.env.SELLER_DEMO_DEFECT},
+      oscar?{adapter:createOscarRepairAdapter({bridgeRoot:resolve(root,'integrations/oscar'),python:resolve(root,'.local-work/p2/oscar-venv/bin/python')})}:undefined):undefined,
     getApplicationContext:createApplicationContextReader(applicationRoot,sources),
     generateSuggestions:createJourneyPlanner({apiKey,model}),
     validateStudyUser: validateApplicationInputValues,

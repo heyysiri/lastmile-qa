@@ -139,7 +139,7 @@ async function assertContext(tree: string, context: ApplicationContext) {
     || hashValue(manifest) !== context.version) throw new Error('Frozen application source context is incomplete');
   for (const source of context.sources) {
     const content = await readSourceText(tree, source.path);
-    if (hashValue(content) !== source.digest || content.slice(0, 2000) !== source.excerpt) {
+    if (hashValue(content) !== source.digest || !source.excerpt || !content.includes(source.excerpt)) {
       throw new Error('Application source differs from the frozen context');
     }
   }

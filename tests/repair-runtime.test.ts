@@ -200,6 +200,22 @@ function forVerification(prepared: RepairPreparation): RepairJob {
     verificationRequest: { requestId: 'verify', patchHash: prepared.patch!.hash } };
 }
 
+it('accepts a focused source excerpt while requiring the full file digest', async () => {
+  const source = job.snapshot.context.sources.find(source => source.path === storePath)!;
+  source.excerpt = original.slice(original.indexOf('export class SellerStore'), original.indexOf('export class SellerStore') + 2000);
+  expect(source.excerpt).not.toBe(original.slice(0, 2000));
+  const prepared = await runtime().repair.prepare(job);
+  expect(prepared.error).toBeUndefined();
+  expect(prepared.patch).toBeDefined();
+});
+
+it('rejects an excerpt that is not in the digest-verified source', async () => {
+  job.snapshot.context.sources[0].excerpt = 'Invented source evidence';
+  const { repair, propose } = runtime();
+  expect((await repair.prepare(job)).error).toBeDefined();
+  expect(propose).not.toHaveBeenCalled();
+});
+
 it('replays the regression and control and verifies the reviewed stock repair in a fresh runtime and database', async () => {
   const { repair, propose, options } = runtime();
   const prepared = await repair.prepare(job);
