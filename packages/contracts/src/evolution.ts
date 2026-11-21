@@ -1,0 +1,27 @@
+import {z} from 'zod';
+import {PersistentTaskSchema, type ApplicationContext, type PopulationDetail, type PopulationExecutionDetail} from './populations';
+import type {StudyApplication} from './studies';
+import type {EvidenceRun} from './runtime';
+
+const id=z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/);
+const hash=z.string().regex(/^[a-f0-9]{64}$/);
+const sourcePath=z.string().max(240).regex(/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[a-zA-Z0-9_./[\]-]+$/);
+export const SuggestJourneysRequestSchema=z.object({requestId:id,objective:z.string().trim().min(1).max(2000).optional()}).strict();
+export const PrepareRepairRequestSchema=z.object({requestId:id,executionId:id}).strict();
+export const VerifyRepairRequestSchema=z.object({requestId:id,patchHash:hash}).strict();
+export const JourneySuggestionSchema=z.object({task:PersistentTaskSchema,reason:z.string().trim().min(1).max(2000),sourcePaths:z.array(sourcePath).min(1).max(12),historyRunIds:z.array(id).max(12),assumptions:z.array(z.string().max(1000)).max(10)}).strict();
+export const PatchProposalSchema=z.object({summary:z.string().trim().min(1).max(4000),changes:z.array(z.object({path:sourcePath,beforeHash:hash,before:z.string().max(150000),after:z.string().max(150000)}).strict()).min(1).max(4),hash}).strict().superRefine((patch,ctx)=>{if(new Set(patch.changes.map(change=>change.path)).size!==patch.changes.length)ctx.addIssue({code:'custom',message:'Patch paths must be unique'});});
+export type SuggestJourneysRequest=z.infer<typeof SuggestJourneysRequestSchema>;
+export type PrepareRepairRequest=z.infer<typeof PrepareRepairRequestSchema>;
+export type VerifyRepairRequest=z.infer<typeof VerifyRepairRequestSchema>;
+export type JourneySuggestion=z.infer<typeof JourneySuggestionSchema>;
+export type PatchProposal=z.infer<typeof PatchProposalSchema>;
+export type SuggestionSnapshot={population:PopulationDetail;application:StudyApplication;context:ApplicationContext;previousContext?:ApplicationContext;objective?:string};
+export type SuggestionJob={id:string;populationId:string;request:SuggestJourneysRequest;status:'queued'|'running'|'completed'|'interrupted';createdAt:string;finishedAt?:string;snapshot:SuggestionSnapshot;suggestions?:JourneySuggestion[];error?:string};
+export type RepairTrial={testerId:string;role:'regression'|'control';outcome:'passed'|'failed'|'inconclusive';message:string;run:EvidenceRun};
+export type RepairSnapshot={execution:PopulationExecutionDetail;context:ApplicationContext};
+export type RepairPreparation={reproduction:RepairTrial[];patch?:PatchProposal;sourceVersion?:string;error?:string};
+export type RepairVerification={outcome:'verified'|'rejected'|'inconclusive';trials:RepairTrial[];message:string};
+export type RepairJob={id:string;request:PrepareRepairRequest;populationId:string;status:'queued'|'running'|'awaiting_review'|'completed'|'interrupted';stage:'prepare'|'verify';createdAt:string;finishedAt?:string;snapshot:RepairSnapshot;reproduction?:RepairTrial[];patch?:PatchProposal;sourceVersion?:string;verificationRequest?:VerifyRepairRequest;verification?:RepairVerification;error?:string};
+export type GenerateSuggestions=(snapshot:SuggestionSnapshot)=>Promise<JourneySuggestion[]>;
+export type RepairRuntime={prepare:(job:RepairJob)=>Promise<RepairPreparation>;verify:(job:RepairJob)=>Promise<RepairVerification>};

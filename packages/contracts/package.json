@@ -7,7 +7,8 @@
     "./examples": "./src/examples.ts",
     "./runtime": "./src/runtime.ts",
     "./studies": "./src/studies.ts",
-    "./populations": "./src/populations.ts"
+    "./populations": "./src/populations.ts",
+    "./evolution": "./src/evolution.ts"
   },
   "dependencies": {
     "zod": "^4.3.5"
