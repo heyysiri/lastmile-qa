@@ -88,13 +88,14 @@ it('returns malformed plan errors to the model without corrupting the provider c
  expect(turns).toBe(2);
 });
 
-type PlanChange = 'role' | 'path' | 'hash' | 'excerpt' | 'unread' | 'unknown-citation' | 'account' | 'reuse' | 'route' | 'selector' | 'route-selector'
+type PlanChange = 'role' | 'path' | 'hash' | 'excerpt' | 'unread' | 'unknown-citation' | 'account' | 'reuse' | 'route' | 'selector' | 'route-selector' | 'auto-observe'
   | 'basis' | 'identity' | 'multiple' | 'source-goal' | 'source-persona' | 'source-input' | 'oracle-goal' | 'oracle-input';
 
 async function setup(route: string, label: string, change?: PlanChange, entryText = '') {
   await writeFile(join(fixture, 'station.py'), `from tides import station\nroute = "${route}"\nlabel = "${label}"\n`);
   await writeFile(join(fixture, 'unread.py'), 'protected = "Not looked up"\n');
-  const observe = vi.fn(async (_project: Project, _secrets: ProjectSecrets, paths: string[]) => paths.map(path => ({
+  const observe = vi.fn(async (_project: Project, _secrets: ProjectSecrets, paths: string[]) => paths
+    .filter(path => path === route || path === new URL(project.appUrl).pathname).map(path => ({
     path, ...(project.accounts.length ? { accountId } : {}),
     text: `- textbox "${label}"\n${username} ${password}${path === new URL(project.appUrl).pathname ? entryText : ''}`,
     observedAt: now,
@@ -119,9 +120,9 @@ async function setup(route: string, label: string, change?: PlanChange, entryTex
         return call(turn, 'read_source', { path: '$requirements', startLine: 1, endLine: 1 });
       case 3:
         requirement = JSON.parse(result);
-        return call(turn, 'observe_app', { paths: [route] });
+        return call(turn, 'observe_app', { paths: [change === 'auto-observe' ? '/' : route] });
       case 4: {
-        expect(JSON.parse(result)[0]).toMatchObject({ path: route, text: expect.stringContaining(label) });
+        expect(JSON.parse(result)[0]).toMatchObject({ path: change === 'auto-observe' ? '/' : route, text: expect.stringContaining(label) });
         const evidence = { ...source.reference };
         if (change === 'path') evidence.path = 'imaginary.py';
         if (change === 'hash') evidence.hash = '0'.repeat(64);
@@ -172,6 +173,12 @@ async function setup(route: string, label: string, change?: PlanChange, entryTex
 }
 
 describe('repository brain', () => {
+  it('corroborates proposed journey and readback routes during submission without another model navigation request', async () => {
+    const test = await setup('/chart-cabinet', 'High tide', 'auto-observe');
+    const discovery = await test.run();
+    expect(test.observe).toHaveBeenCalledWith(project, secrets, ['/chart-cabinet']);
+    expect(discovery.observations).toEqual(expect.arrayContaining([expect.objectContaining({ path: '/chart-cabinet', accountId })]));
+  });
   it.each([
     { scenario: 'a conflicting guest check', control: 'Station name', expected: 'East station', accounts: false, rejects: true },
     { scenario: 'an uncaptured conflicting guest check', control: 'Station name', expected: undefined, accounts: false, rejects: true },

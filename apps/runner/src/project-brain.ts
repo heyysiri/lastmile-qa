@@ -365,6 +365,11 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
       }
       const kinds = new Map(index.files.map(({ path, kind }) => [path, kind]));
       validateActorContent(draft, allReferences, kinds);
+      const proposedRoutes = [...new Set(draft.journeys.flatMap(journey => [journey.entryPath,
+        ...journey.checks.flatMap(check => check.path ? [check.path] : [])]))]
+        .filter(path => !visited.has(path) && routeSchema.safeParse(path).success && redact(path) === path)
+        .slice(0, routeLimit - visited.size);
+      if (proposedRoutes.length) await captureObservations(proposedRoutes);
       const repositoryBacked = (refs: SourceReference[]) => refs.some(ref => kinds.has(ref.path));
       const issues: string[] = draft.features.filter(feature => !repositoryBacked(feature.sources)).map(feature =>
         `Feature ${feature.id} requires a repository citation. Cite a startupSources ID or read/search a repository file; $brief and $requirements alone do not establish an implemented feature.`);
@@ -515,6 +520,7 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
         inputSchema: z.strictObject({ plan: submissionSchema }),
         callback: async ({ plan }) => {
           if (signal.aborted || accepted) return 'Discovery already ended';
+          const previousObservations = observations.length;
           try {
             const valid = await validate(expand(plan));
             if (signal.aborted) return 'Discovery already ended';
@@ -524,7 +530,8 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
           } catch (error) {
             validationError = error instanceof z.ZodError ? 'Submitted plan violates the project plan schema'
               : error instanceof Error ? redact(error.message) : 'Submitted plan failed validation';
-            return validationError;
+            const added = observations.slice(previousObservations, previousObservations + 6);
+            return added.length ? JSON.stringify({ error: validationError, observations: added }) : validationError;
           }
         },
       }),
