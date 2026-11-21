@@ -1,6 +1,6 @@
 import {McpServer,type CallToolResult} from '@modelcontextprotocol/server';
 import {z} from 'zod';
-import {ConnectProjectSchema,ProjectRunRequestSchema,ProjectRepairRequestSchema,type Project,type ProjectDetail,type ProjectRun,type ProjectRepair,type ProjectTesterResult} from '@lastmile/contracts/projects';
+import {ConnectProjectSchema,ProjectRunRequestSchema,ProjectRepairRequestSchema,type Project,type ProjectDetail,type ProjectDiscovery,type ProjectRun,type ProjectRepair,type ProjectTesterResult} from '@lastmile/contracts/projects';
 
 const id=ConnectProjectSchema.shape.requestId;
 const empty=z.object({}).strict();
@@ -25,8 +25,17 @@ function origin(value:string,name:string){
  catch{throw new Error(`${name} must be an HTTP origin without credentials, a path, query, or fragment`);}
 }
 function resultSummary(result:ProjectTesterResult){
- const {run,...details}=result;
- return {...details,run:{id:run.id,status:run.status,verdict:run.verdict,executionMode:run.executionMode,findings:run.findings,assertions:run.assertions,artifacts:run.artifacts,...(run.evidence?{evidence:{modelCalls:run.evidence.modelCalls,replayCompatible:run.evidence.replayCompatible,actionCount:run.evidence.actions.length}}:{})}};
+ const {tester,journey,checks,finding,sessionContinued,run}=result;
+ return {
+  tester:{id:tester.id,name:tester.name,role:tester.role},journey:{id:journey.id,title:journey.title,goal:journey.goal},
+  checks:checks.map(({id,label,status,expected,actual,basis,phase,atStageStart,message})=>({id,label,status,expected,actual,basis,phase,atStageStart,message})),finding,sessionContinued,
+  run:{id:run.id,status:run.status,verdict:run.verdict,executionMode:run.executionMode,findings:run.findings,...(run.evidence?{evidence:{modelCalls:run.evidence.modelCalls,replayCompatible:run.evidence.replayCompatible,actionCount:run.evidence.actions.length}}:{})},
+ };
+}
+function discoverySummary(discovery:ProjectDiscovery){
+ const {index,plan,modelCalls,durationMs,generatedAt}=discovery;
+ const {version,fileCount,sourceLines,excludedFiles,indexedAt,changedPaths}=index;
+ return {index:{version,fileCount,sourceLines,excludedFiles,indexedAt,changedPathCount:changedPaths.length},plan,modelCalls,durationMs,generatedAt};
 }
 function runSummary(run:ProjectRun){
  return {...run,discovery:undefined,...(run.results?{results:run.results.map(resultSummary)}:{})};
@@ -80,9 +89,10 @@ export function createMcpServer(env:NodeJS.ProcessEnv=process.env){
  }));
  server.registerTool('lastmile_connect_project',{description:'Connect an existing repository and running development app. Use a stable requestId and absolute repositoryPath on the runner machine. Discovery runs asynchronously: poll lastmile_get_project until ready or failed. Accounts must be synthetic development accounts. Optional fixed commands enable private repair verification; start is an argv array, not a shell string. Recover an uncertain response with lastmile_get_connection(requestId).',inputSchema:ConnectProjectSchema,annotations:write},args=>respond(async()=>connected(await request('/api/projects',args))));
  server.registerTool('lastmile_get_connection',{description:'Recover a connection after a lost response using its original requestId. This never creates a project. Poll lastmile_get_project for discovery.',inputSchema:z.object({requestId:id}).strict(),annotations:read},({requestId})=>respond(async()=>connected(await request(`/api/projects/by-request/${requestId}`))));
- server.registerTool('lastmile_get_project',{description:'Inspect discovery progress, generated testers and journeys, gaps, and compact run/repair history. Wait for ready before running tests; failed is terminal and includes error.',inputSchema:z.object({projectId:id}).strict(),annotations:read},({projectId})=>respond(async()=>{
+ server.registerTool('lastmile_get_project',{description:'Inspect discovery progress, generated testers and journeys, gaps, index metrics, and compact run/repair history. Wait for ready before running tests; failed is terminal and includes error. includeEvidence adds full index paths, discovery browser snapshots, and original history evidence.',inputSchema:z.object({projectId:id,includeEvidence:z.boolean().default(false)}).strict(),annotations:read},({projectId,includeEvidence})=>respond(async()=>{
   const project=await request<ProjectDetail>(`/api/projects/${projectId}`);
-  return {...project,...(project.runs?{runs:project.runs.map(runSummary)}:{}),...(project.repairs?{repairs:project.repairs.map(repairSummary)}:{}),dashboardUrl:link(projectId)};
+  if(includeEvidence)return {...project,dashboardUrl:link(projectId)};
+  return {...project,...(project.discovery?{discovery:discoverySummary(project.discovery)}:{}),...(project.runs?{runs:project.runs.map(runSummary)}:{}),...(project.repairs?{repairs:project.repairs.map(repairSummary)}:{}),dashboardUrl:link(projectId)};
  }));
  server.registerTool('lastmile_run_project',{description:'Queue explore or release testing against development data; browser journeys may change business records. autoRepair defaults true and prepares/verifies any eligible fix privately. Use a stable requestId; retries must use identical inputs. Poll lastmile_get_run until both run and automatic repair finish. A completed run alone is not repair success. No patch is applied to the original repository.',inputSchema:ProjectRunRequestSchema.extend({projectId:id,autoRepair:z.boolean().default(true)}),annotations:{...write,destructiveHint:true}},({projectId,...requestBody})=>respond(async()=>runSummary(await request<ProjectRun>(`/api/projects/${projectId}/runs`,requestBody))));
  server.registerTool('lastmile_get_run',{description:'Poll run status and automatic repairStatus together. queued/running/awaiting_run/pending require polling. completed/interrupted are terminal jobs; blocked/not_needed/not_requested explain absence of repair. Read run.error and repairBlockedReason. A completed repair succeeds only when verification.outcome is verified. Results retain findings/checks; includeEvidence adds full browser logs.',inputSchema:z.object({runId:id,includeEvidence:z.boolean().default(false)}).strict(),annotations:read},({runId,includeEvidence})=>respond(async()=>{

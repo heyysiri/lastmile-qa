@@ -150,23 +150,27 @@ it('times out a stalled runner and refuses redirects with its authorization head
 
 
 it('keeps findings and frozen checks in compact responses and exposes browser evidence on demand',async()=>{
- const result={tester:{id:'tester-1'},journey:{id:'journey-1'},checks:[{id:'quantity',status:'passed'}],run:{id:'evidence-1',status:'completed',verdict:'passed',executionMode:'deterministic',steps:[{observation:'Large browser log'}],evidence:{modelCalls:0,replayCompatible:true,actions:[{action:{tool:'navigate',path:'/stock'}}]}}};
+ const result={tester:{id:'tester-1',name:'Staff',role:'Stock clerk',context:{inputs:{stock:10},summary:'Repeated tester context'}},journey:{id:'journey-1',title:'Save stock',goal:'Preserve quantity',inputs:{stock:10},sources:[{excerpt:'Repeated journey excerpt'}]},checks:[{id:'quantity',label:'Stock quantity',status:'passed',expected:10,actual:10,basis:'requirement',phase:'after_reload',message:'Matched',sources:[{excerpt:'Repeated check excerpt'}]}],run:{id:'evidence-1',status:'completed',verdict:'passed',executionMode:'deterministic',steps:[{observation:'Large browser log'}],evidence:{modelCalls:0,replayCompatible:true,actions:[{action:{tool:'navigate',path:'/stock'}}]}}};
  const fullRun={...baseRun,findings:[{id:'finding-1',title:'Stock changed'}],results:[result],discovery:{plan:{summary:'Full discovery'}}};
  const fullRepair={...repair,status:'completed',sourceRun:fullRun,project:{...project,discovery:{plan:{summary:'Large repeated discovery'}}},patch:{summary:'Fix stock'},verification:{outcome:'verified',results:[result]}};
  const {url}=await fixture((req,res)=>send(res,req.url==='/api/project-runs/run-1'?fullRun:req.url?.startsWith('/api/project-repairs?')?[fullRepair]:fullRepair));
  const {client}=await start(url);
  const compact=data(await call(client,'lastmile_get_run',{runId:'run-1'}));
  expect(compact.run.findings).toEqual(fullRun.findings);
- expect(compact.run.results[0]).toMatchObject({checks:result.checks,run:{executionMode:'deterministic',evidence:{modelCalls:0,replayCompatible:true}}});
+ expect(compact.run.results[0]).toMatchObject({checks:[{id:'quantity',label:'Stock quantity',status:'passed',expected:10,actual:10,basis:'requirement',phase:'after_reload',message:'Matched'}],run:{executionMode:'deterministic',evidence:{modelCalls:0,replayCompatible:true}}});
  expect(compact.run.results[0].run.steps).toBeUndefined();
+ expect(compact.run.results[0].tester).toEqual({id:'tester-1',name:'Staff',role:'Stock clerk'});
+ expect(compact.run.results[0].journey).toEqual({id:'journey-1',title:'Save stock',goal:'Preserve quantity'});
+ expect(JSON.stringify(compact)).not.toContain('Repeated');
  expect(compact.repairs[0].sourceRun).toBeUndefined();
  expect(compact.repairs[0].patch).toBeUndefined();
  const details=data(await call(client,'lastmile_get_repair',{repairId:'repair-1'}));
- expect(details).toMatchObject({patch:fullRepair.patch,verification:{outcome:'verified',results:[{checks:result.checks,run:{evidence:{modelCalls:0}}}]}});
+ expect(details).toMatchObject({patch:fullRepair.patch,verification:{outcome:'verified',results:[{checks:[{id:'quantity',status:'passed',expected:10,actual:10}],run:{evidence:{modelCalls:0}}}]}});
  expect(details.project.discovery).toBeUndefined();
+ expect(JSON.stringify(details)).not.toContain('Repeated');
  const evidence=data(await call(client,'lastmile_get_run',{runId:'run-1',includeEvidence:true}));
- expect(evidence.run.results[0].run.steps).toEqual(result.run.steps);
- expect(data(await call(client,'lastmile_get_repair',{repairId:'repair-1',includeEvidence:true})).sourceRun).toEqual(fullRun);
+ expect(evidence.run).toEqual(fullRun);
+ expect(data(await call(client,'lastmile_get_repair',{repairId:'repair-1',includeEvidence:true}))).toEqual({...fullRepair,dashboardUrl:'http://127.0.0.1:3000/projects/project-1'});
 });
 
 it('does not expose supplied account credentials even when an upstream connect response echoes them',async()=>{
@@ -202,4 +206,19 @@ it('preserves opaque identifiers, statuses, findings, and evidence with a short 
  const {client}=await start(url,{RUNNER_API_TOKEN:'a'});
  const result=data(await call(client,'lastmile_get_run',{runId:'a-run'}));
  expect(result).toMatchObject({run,repairStatus:'awaiting_run',dashboardUrl:'http://127.0.0.1:3000/projects/project-1'});
+});
+
+
+it('returns project discovery index metrics and the full plan by default, with full project evidence opt-in',async()=>{
+ const discovery={index:{root:'/repo',version:'source-1',fileCount:4266,sourceLines:10000,excludedFiles:100,indexedAt:'2026-01-01',changedPaths:['stock.ts'],files:[{path:'stock.ts',symbols:['Large symbol tree'],imports:['stock']}],symbols:{stock:'Repeated tree'}},plan:{summary:'Stock workflow',gaps:['No guest account'],testers:[{id:'tester-1',context:{locale:'en'}}],journeys:[{id:'journey-1',sources:[{excerpt:'Required source citation'}]}]},observations:[{text:'Large browser snapshot'}],modelCalls:1,durationMs:10,generatedAt:'2026-01-01'};
+ const fullProject={...project,discovery,runs:[{...baseRun,results:[]}],history:[{testerId:'tester-1',observations:['History evidence']}],repairs:[]};
+ const {url}=await fixture((_req,res)=>send(res,fullProject));
+ const {client}=await start(url);
+ const summary=data(await call(client,'lastmile_get_project',{projectId:project.id}));
+ expect(summary.discovery).toEqual({index:{version:'source-1',fileCount:4266,sourceLines:10000,excludedFiles:100,indexedAt:'2026-01-01',changedPathCount:1},plan:discovery.plan,modelCalls:1,durationMs:10,generatedAt:'2026-01-01'});
+ expect(summary.history).toEqual(fullProject.history);
+ expect(JSON.stringify(summary)).not.toContain('Large browser snapshot');
+ expect(JSON.stringify(summary)).not.toContain('Large symbol tree');
+ const full=data(await call(client,'lastmile_get_project',{projectId:project.id,includeEvidence:true}));
+ expect(full).toEqual({...fullProject,dashboardUrl:'http://127.0.0.1:3000/projects/project-1'});
 });
