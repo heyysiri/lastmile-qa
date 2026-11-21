@@ -5,6 +5,7 @@ import Fastify from 'fastify';
 import type { ZodType } from 'zod';
 import { InvestigationRequestSchema, ReplayRequestSchema, type EvidenceRun, type ReplayPlan } from '@lastmile/contracts/runtime';
 import type { GenerateStudy, StudyApplication, StudyUser } from '@lastmile/contracts/studies';
+import type { GenerateSuggestions, RepairRuntime } from '@lastmile/contracts/evolution';
 import type { ApplicationContext } from '@lastmile/contracts/populations';
 import { compileInputs } from '@lastmile/contracts';
 import { readArtifact, hashValue } from './artifacts';
@@ -17,6 +18,7 @@ import { executeRun, type ExecuteRun } from './execution';
 import { openRunStore, RunnerError } from './store';
 import { registerStudyRoutes } from './study-routes';
 import { registerPopulationRoutes } from './population-routes';
+import { registerEvolutionRoutes } from './evolution-routes';
 
 export type ServerOptions = {
   databasePath: string;
@@ -28,6 +30,8 @@ export type ServerOptions = {
   getBuildId?:()=>Promise<string>;
   applications?: StudyApplication[];
   generateStudy?: GenerateStudy;
+  generateSuggestions?: GenerateSuggestions;
+  repairRuntime?: RepairRuntime;
   validateStudyUser?: (application: StudyApplication, user: StudyUser) => void;
   getApplicationContext?: (application: StudyApplication) => Promise<ApplicationContext>;
   executeReplay?: (run:EvidenceRun,onUpdate:(run:RunRecord)=>void,replay:ReplayPlan)=>Promise<EvidenceRun>;
@@ -135,6 +139,7 @@ export function createServer(options: ServerOptions) {
     () => { const study = store.studies.claimNext(); return study && { kind: 'study' as const, study }; },
     () => { const job = store.claimInvestigation(); return job && { kind: 'investigation' as const, job }; },
     () => { const batch = store.populations.claimNext(); return batch && { kind: 'population' as const, batch }; },
+    () => { const job = store.evolution.claimNext(); return job && { kind: 'evolution' as const, job }; },
   ];
   let nextQueue = 0;
 
@@ -172,6 +177,10 @@ export function createServer(options: ServerOptions) {
             for (const run of runs) failRun(run, 'The connected application origin changed after launch');
           }
           store.populations.finishExecution(execution);
+          continue;
+        }
+        if (work.kind === 'evolution') {
+          await store.evolution.execute(work.job, options);
           continue;
         }
         if (work.kind === 'investigation') {
@@ -243,8 +252,10 @@ export function createServer(options: ServerOptions) {
   });
   app.setNotFoundHandler((_request, reply) => reply.code(404).send({ code: 'not_found', message: 'Resource does not exist' }));
 
+  const suggestionsReady = Boolean(options.generateSuggestions);
+  const repairsReady = Boolean(options.repairRuntime);
   app.get('/api/health', async () => ({
-    status: 'ok', modelConfigured, executionReady: execute !== executeRun,
+    status: 'ok', modelConfigured, executionReady: execute !== executeRun, suggestionsReady, repairsReady,
   }));
   app.get('/api/capabilities', async () => capabilities);
   registerStudyRoutes(app, store.studies, {
@@ -264,6 +275,16 @@ export function createServer(options: ServerOptions) {
     origin: sellerDemoUrl.origin,
     executionMode,
     replayAvailable: Boolean(options.executeReplay),
+    startWorker,
+  });
+
+  registerEvolutionRoutes(app, store, {
+    applications: options.applications ?? [],
+    origin: sellerDemoUrl.origin,
+    getApplicationContext: options.getApplicationContext,
+    getBuildId: options.getBuildId,
+    suggestionsReady,
+    repairsReady,
     startWorker,
   });
 

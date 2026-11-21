@@ -8,6 +8,7 @@ import { compileInputs, type RunRecord, type RunRequest, type ContextPack } from
 import { desktopContext, inventoryScenario, mobileContext, storeScenario } from '@lastmile/contracts/examples';
 import { createStudyStore } from './study-store';
 import { createPopulationStore } from './population-store';
+import { createEvolutionStore } from './evolution-store';
 
 export class RunnerError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) {
@@ -125,7 +126,22 @@ export function openRunStore(path: string) {
 
   const runAccess = { enqueue: enqueueRun, get: getRun, save, hasRunning: () => Boolean(findRunning.get()) };
   const studies = createStudyStore(db, runAccess);
-  const populations = createPopulationStore(db, runAccess, studies.requireStudy);
+  const populationStore = createPopulationStore(db, runAccess, studies.requireStudy);
+  const evolution = createEvolutionStore(db, { getExecutionDetail: populationStore.getExecutionDetail });
+  const populations = {
+    ...populationStore,
+    prepareLaunch(...args: Parameters<typeof populationStore.prepareLaunch>) {
+      const [population, request] = args;
+      evolution.ensureNoActiveRepair(population.id);
+      const commit = populationStore.prepareLaunch(...args);
+      return db.transaction((...capture: Parameters<typeof commit>) => {
+        const previous = populationStore.getLaunch(population.id, request);
+        if (previous) return previous;
+        evolution.ensureNoActiveRepair(population.id);
+        return commit(...capture);
+      }).immediate;
+    },
+  };
   const nextQueued = db.prepare<[], JsonRow>(`
     SELECT data FROM runs WHERE status = 'queued'
       AND NOT EXISTS (SELECT 1 FROM study_runs WHERE run_id = runs.id)
@@ -148,6 +164,7 @@ export function openRunStore(path: string) {
   const recoverInterrupted = db.transaction(() => {
     studies.recoverInterrupted();
     populations.recoverInterrupted();
+    evolution.recoverInterrupted();
     for(const record of listInvestigations()) if(record.status==='running') saveInvestigation({...record,status:'interrupted',error:'Runner restarted during investigation'});
     for (const row of findRunning.all()) {
       const run = decode<RunRecord>(row);
@@ -164,6 +181,7 @@ export function openRunStore(path: string) {
     recoverInterrupted,
     studies,
     populations,
+    evolution,
     getInvestigation:(id:string)=>{const row=findInvestigation.get(id);return row?decode<InvestigationRecord>(row):undefined;},
     listInvestigations,
     enqueueInvestigation:db.transaction((request:InvestigationRequest)=>{
