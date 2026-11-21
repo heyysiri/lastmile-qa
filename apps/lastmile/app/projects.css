@@ -8,12 +8,8 @@
 .workspace-shell { min-height: 100vh; display: flex; flex-direction: column; }
 .workspace-topbar { height: 82px; display: flex; align-items: center; gap: 48px; padding: 0 clamp(20px, 5vw, 76px); border-bottom: 1px solid var(--line); background: #fff; }
 .workspace-brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; font-size: 26px; font-weight: 800; letter-spacing: -1.5px; }
-.brand-period { color: #c74f2d; }
 .eyes-mark { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; gap: 4px; background: #f6c45b; border-radius: 11px; transform: rotate(-7deg); }
 .eyes-mark i { width: 7px; height: 12px; background: #34392e; border-radius: 50%; transform: rotate(7deg); }
-.workspace-topbar nav { display: flex; align-self: stretch; }
-.workspace-topbar nav a { display: flex; align-items: center; border-bottom: 2px solid transparent; padding: 0 4px; color: var(--ink-2); text-decoration: none; font-size: 13px; font-weight: 700; }
-.workspace-topbar nav a[aria-current] { border-color: var(--ink); color: var(--ink); }
 .runner-status { margin-left: auto; display: flex; align-items: center; gap: 7px; color: var(--ink-2); font-size: 12px; }
 .runner-status i, .project-list-status i { width: 6px; height: 6px; flex: none; border-radius: 50%; background: #65834b; }
 .runner-status .offline { background: #b84931; }
@@ -156,7 +152,7 @@
 @media (max-width: 800px) { .project-report-grid { grid-template-columns: 1fr; gap: 12px; } }
 @media (max-width: 640px) {
   .workspace-topbar { height: 68px; gap: 24px; }.workspace-brand { font-size: 23px; }.eyes-mark { width: 31px; height: 31px; }.runner-status { font-size: 10px; gap: 5px; }
-  .workspace-topbar nav a { font-size: 12px; }.workspace-main { padding-top: 26px; }.workspace-footer span:last-child { display: none; }
+  .workspace-main { padding-top: 26px; }.workspace-footer span:last-child { display: none; }
   .directory-hero { grid-template-columns: 1fr; padding: 14px 0 30px; gap: 12px; }.directory-hero h1 { font-size: 45px; letter-spacing: -2px; }.directory-hero p { font-size: 13px; }.workspace-eyebrow { font-size: 11px; margin-bottom: 16px; }
   .directory-illustration { min-height: 170px; max-width: 290px; margin-top: 10px; }.hero-faces .tester-face { width: 72px; }.project-grid { grid-template-columns: 1fr; }.project-tile { padding: 20px; }.project-tile-top { margin-bottom: 18px; }
   .directory-heading { padding-top: 22px; }.directory-heading h2 { font-size: 18px; }.project-page-heading { margin-bottom: 20px; }.project-page-heading h1 { letter-spacing: -.7px; }.project-heading-with-action { align-items: flex-start; }

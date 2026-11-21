@@ -498,9 +498,10 @@ test('retires legacy entry screens while keeping project navigation focused', as
     await page.goto(path);
     await expect(page).toHaveURL(/\/$/);
   }
-  const navigation = page.getByRole('navigation', { name: 'Primary' });
-  await expect(navigation.getByText('Advanced', { exact: true })).toHaveCount(0);
-  await expect(navigation.getByRole('link', { name: 'Projects', exact: true })).toBeVisible();
+  const header = page.getByRole('banner');
+  await expect(header.getByRole('link', { name: 'Projects', exact: true })).toHaveCount(0);
+  await expect(header.getByRole('link', { name: 'LastMile QA home' })).toHaveAttribute('href', '/');
+  await expect(header.getByText('LastMile QA', { exact: true })).toBeVisible();
 });
 
 test('retains setup in memory when the dialog closes and browser storage is unavailable', async ({ page }) => {
