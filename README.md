@@ -9,13 +9,13 @@ Use Node 22+ and pnpm 10.33.0.
 1. `pnpm install`
 2. `pnpm exec playwright install chromium`
 3. Copy `.env.example` to `.env` if it does not exist. Set `OPENAI_API_KEY` and an accessible `OPENAI_MODEL`. Credentials stay server-side.
-4. `pnpm dev`
+4. `pnpm build` then `pnpm start` for release checks. Use `pnpm dev` while editing code.
 
 Dashboard: http://127.0.0.1:3000
 Connected seller demo: http://127.0.0.1:3001
 Runner: http://127.0.0.1:4000
 
-Stop an existing stack before starting another. Root `.env` changes require a restart. No cloud resources or deployment are required at this checkpoint.
+The built local stack avoids development hot reloads changing the page during a replay. Rebuild after source edits; the runner rejects seller source or requirements that differ from the compiled release stamp. Stop an existing stack before starting another. Root `.env` changes require a restart. No cloud resources or deployment are required at this checkpoint.
 
 ## Persistent customer checkpoint
 
@@ -24,12 +24,16 @@ Start with two testers, one updating inventory and one setting up a store. Revie
 1. Give the inventory tester `quantity: 250` and the store tester `storeName: Fresh Market`. Continue both journeys on the healthy app. Expect passing checks and separate account identities.
 2. For the next journey, choose store setup/profile editing for both testers. Use `Returning Craft Shop` and `Fresh Market Studio` as their respective store names. Expect the same account identities, one prior observation per tester, and successful saves. The stock preservation checks should expect 250 and 5 respectively.
 3. This successful execution can serve as a release baseline. A checkpoint comparison copies each tester's saved starting state, original inputs, assertions and recorded browser actions into a separate account. It makes **no model calls** and leaves the original accounts untouched.
-4. To demonstrate a history-dependent regression, stop the idle stack and restart with `SELLER_DEMO_DEFECT=reset-stock-on-store-save pnpm dev`. Compare against the healthy profile-update baseline. Expect the returning seller to fail stock preservation (250 expected, 5 observed) while the default-stock seller passes. The seller app labels this deliberately seeded defect.
-5. Stop the idle stack and restart with `pnpm dev` to restore healthy behavior. Compare against the **same original baseline**. Expect both checks to pass. This demonstrates independent rechecking, not an autonomous coding-agent repair.
+4. To demonstrate a history-dependent regression, stop the idle stack and restart with `SELLER_DEMO_DEFECT=reset-stock-on-store-save pnpm start`. Compare against the healthy profile-update baseline. Expect the returning seller to fail stock preservation (250 expected, 5 observed) while the default-stock seller passes. The seller app labels this deliberately seeded defect.
+5. Stop the idle stack and restart with `pnpm start` to restore healthy behavior. Compare against the **same original baseline**. Expect both checks to pass. This demonstrates independent rechecking, not an autonomous coding-agent repair.
 
 A replay that cannot reproduce the browser actions is inconclusive, not proof of a regression. Persistent comparisons use the population workflow; legacy replay/investigation endpoints are for fresh-session runs.
 
 Application context lists explicitly configured code and requirements with content digests, and is frozen with each release execution. It is a traceable source manifest, not automatic understanding of an arbitrary repository. Browser testers receive only their own latest visible observations, profile and task; they cannot read source code or the verifier's trusted state.
+
+For a quick check of the prepared population, choose **Compare a release**, enter `My manual check`, select **Healthy profile update**, and click **Run checkpoint comparison**. Expect two still passing, zero regressions, and zero model calls. Refresh the result page; the same results should remain.
+
+To advance the actual customers, choose **Continue their journeys** with release label `My returning users`. Set the first tester's workflow to **Update stock quantity** with quantity `300`. Set the second to **Set up a seller store** with store name `Manual Market`. Expect two passing journeys and one additional observed history entry per tester, on their original accounts. This makes model calls. Comparing the old baseline afterward still uses its frozen stock values of 250 and 5, without resetting the current accounts.
 
 ## Generate the initial audience
 
@@ -74,4 +78,4 @@ The seller app visibly labels this condition and cancels store saves after 700 m
 
 Run targeted tests for changed components. `pnpm typecheck`, scoped eslint and both Next builds verify the integrated workspace. Playwright UI tests use intercepted or isolated no-model APIs; explicit live scripts use OpenAI. The browser-seller integration test requires the seller app running.
 
-SQLite databases are in `.data/`; evidence is in `artifacts/`. These, `.env`, project plans and local execution notes are ignored by Git. No production data migration, push, merge or deployment is implied. AWS deployment is the final planned stage after local acceptance. AWS is for hosting only; no AWS AI or memory services are used.
+SQLite databases are in `.data/`; evidence is in `artifacts/`. Evidence includes screenshots, semantic steps, assertions and sanitized network diagnostics. Raw Playwright trace archives are not exported because they contain session credentials; legacy raw trace downloads are also disabled. These, `.env`, project plans and local execution notes are ignored by Git. No production data migration, push, merge or deployment is implied. AWS deployment is the final planned stage after local acceptance. AWS is for hosting only; no AWS AI or memory services are used.

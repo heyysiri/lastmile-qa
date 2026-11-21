@@ -14,3 +14,18 @@ export async function sourceBuildId(directories:string[],variant:string):Promise
   for(const dir of directories) await visit(dir);
   return hash.digest('hex');
 }
+
+/** The selected requirements are part of the release identity, alongside implementation. */
+export async function releaseSourceId(root:string):Promise<string>{
+  const source=await sourceBuildId(['app','components','lib'].map(dir=>join(/* turbopackIgnore: true */ root,dir)),'');
+  return createHash('sha256').update(source).update(await readFile(join(/* turbopackIgnore: true */ root,'requirements.md'))).digest('hex');
+}
+
+export async function servedBuildId(root:string,variant:string,production:boolean):Promise<string>{
+  const sourceId=await releaseSourceId(root);
+  if(!production)return createHash('sha256').update(sourceId).update(variant).digest('hex');
+  const stamp=JSON.parse(await readFile(join(/* turbopackIgnore: true */ root,'.next/lastmile-source.json'),'utf8'));
+  const buildId=(await readFile(join(/* turbopackIgnore: true */ root,'.next/BUILD_ID'),'utf8')).trim();
+  if(stamp.sourceId!==sourceId||stamp.buildId!==buildId)throw new Error('Source differs from the compiled application; rebuild before testing');
+  return createHash('sha256').update(buildId).update(sourceId).update(variant).digest('hex');
+}

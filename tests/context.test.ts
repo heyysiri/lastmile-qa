@@ -93,7 +93,7 @@ describe('browser journey', () => {
     }));
     await browser.close();
     expect(browser.page.isClosed()).toBe(true);
-    for (const file of ['trace.zip', 'final.png', 'step-5.png', 'network.json']) {
+    for (const file of ['final.png', 'step-5.png', 'network.json']) {
       expect((await stat(join(artifacts, file))).size).toBeGreaterThan(0);
     }
   }, 15_000);
@@ -173,14 +173,14 @@ describe('browser journey', () => {
     }));
   }, 15_000);
 
-  it('releases the browser and writes remaining artifacts when trace export fails', async () => {
+  it('releases the browser and writes remaining artifacts when the final screenshot cannot be saved', async () => {
     const browser = await open();
     await browser.execute({ tool: 'navigate', path: '/surface' });
-    await mkdir(join(artifacts, 'trace.zip'));
+    await mkdir(join(artifacts, 'final.png'));
     await expect(browser.close()).rejects.toThrow(/evidence/);
     session = undefined;
     expect(browser.page.isClosed()).toBe(true);
-    expect((await stat(join(artifacts, 'final.png'))).size).toBeGreaterThan(0);
+    expect((await stat(join(artifacts, 'step-1.png'))).size).toBeGreaterThan(0);
     expect(JSON.parse(await readFile(join(artifacts, 'network.json'), 'utf8'))).toEqual([]);
   }, 15_000);
 
@@ -195,3 +195,18 @@ describe('browser journey', () => {
     await expect(browser.observe()).rejects.toThrow(/cancelled/);
   }, 15_000);
 });
+
+it('refreshes replay references without consuming action steps or exporting session cookies',async()=>{
+ const browser=await open();
+ await browser.execute({tool:'navigate',path:'/surface'});
+ for(let i=0;i<20;i++){
+  await browser.refreshObservation();
+  await browser.execute({tool:'click',locator:button('Save')});
+ }
+ expect(steps).toHaveLength(21);expect(browser.actions).toHaveLength(21);
+ await browser.close();
+ const {readdir}=await import('node:fs/promises');
+ const files=await readdir(artifacts);
+ expect(files).not.toContain('trace.zip');
+ for(const file of files)expect((await readFile(join(artifacts,file))).includes(Buffer.from('synthetic-session'))).toBe(false);
+},15000);

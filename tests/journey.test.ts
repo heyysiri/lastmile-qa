@@ -69,7 +69,7 @@ it('refreshes visible controls before each replay action without asking the mode
  const calls:string[]=[];
  let refreshed=false;
  vi.stubGlobal('fetch',vi.fn(async(url:URL)=>Response.json(url.pathname.endsWith('/build')?{buildId:'build'}:{namespaceId:'namespace',cookie:{name:'session',value:'synthetic',path:'/'}})));
- mocks.session.mockImplementation(async()=>({page:{},observe:async()=>{refreshed=true;calls.push('observe');return 'Fresh visible controls';},execute:async(action:BrowserAction)=>{calls.push(action.tool);if(action.tool==='click'&&!refreshed)throw new Error('Observed DOM nodes replaced during hydration');refreshed=false;return 'Done';},actions:[],capabilities:[],close:async()=>{}}));
+ mocks.session.mockImplementation(async()=>({page:{},refreshObservation:async()=>{refreshed=true;calls.push('observe');return 'Fresh visible controls';},execute:async(action:BrowserAction)=>{calls.push(action.tool);if(action.tool==='click'&&!refreshed)throw new Error('Observed DOM nodes replaced during hydration');refreshed=false;return 'Done';},actions:[],capabilities:[],close:async()=>{}}));
  mocks.verify.mockResolvedValue(storeScenario.contract.assertions.map(a=>({id:a.id,status:'passed'})));
  try{
   const result=await createJourneyExecutor({origin:'http://localhost:3001',artifactRoot:directory,testToken:'secret',model:'fake'})(run,()=>{},{...plan,hash:hashReplayPlan(plan)});

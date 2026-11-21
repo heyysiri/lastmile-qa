@@ -4,7 +4,7 @@ import { join } from 'node:path';
 export const hashValue = (value: unknown): string => createHash('sha256').update(JSON.stringify(value, (_k,v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(([a],[b])=>a.localeCompare(b))) : v)).digest('hex');
 const hashBytes = (value: Buffer) => createHash('sha256').update(value).digest('hex');
 export type ArtifactEntry = {name:string;bytes:number;sha256:string};
-const validName = (name:string) => /^[a-zA-Z0-9_-]+\.[a-zA-Z0-9]+$/.test(name);
+const validName = (name:string) => name!=='trace.zip' && /^[a-zA-Z0-9_-]+\.[a-zA-Z0-9]+$/.test(name);
 export async function writeArtifactManifest(directory:string):Promise<ArtifactEntry[]> {
   const manifest:ArtifactEntry[]=[];
   for(const name of (await readdir(directory)).sort()) {

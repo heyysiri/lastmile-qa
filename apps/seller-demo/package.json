@@ -3,8 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "start": "next start --hostname 127.0.0.1 --port 3001",
     "dev": "next dev --hostname 127.0.0.1 --port 3001",
-    "build": "next build",
+    "build": "tsx ../../scripts/build-seller.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

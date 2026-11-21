@@ -19,6 +19,7 @@ export type BrowserSession = {
   page: Page;
   execute(action: BrowserAction): Promise<string>;
   observe(): Promise<string>;
+  refreshObservation(): Promise<string>;
   actions: RecordedAction[];
   capabilities: AppliedCapability[];
   networkEvents: unknown[];
@@ -163,7 +164,6 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
       }
     });
     await cdp.send('Fetch.enable', { patterns: [{ requestStage: 'Response' }] });
-    await session.tracing.start({ screenshots: true, snapshots: true });
 
     let index = 0;
     let busy = false;
@@ -239,6 +239,32 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
       }
     }
 
+    async function snapshot(timing:{timeout:number;signal:AbortSignal}) {
+        const url = page.url();
+        if (url !== 'about:blank' && !allowed(new URL(url), origin)) {
+          throw new BrowserActionError('Browser reached a blocked location');
+        }
+        const focusRef = await page.locator(':focus').count() === 1
+          ? await page.locator(':focus').ariaSnapshot({ depth: 1, ...timing }) : '';
+        const snapshot = (await page.ariaSnapshot({ mode: 'ai', ...timing })).slice(0, 16_000);
+        const refs = snapshot.split('\n').flatMap(line => {
+          const ref = /\[ref=((?:f\d+)?e\d+)\]/.exec(line)?.[1];
+          return ref && !line.includes('[aria-hidden]') ? [page.getByRef(ref)] : [];
+        });
+        observed = refs.reduce<Locator | undefined>((locators, ref) => locators ? locators.or(ref) : ref, undefined);
+        return `URL: ${cleanUrl(url)}\nFocused: ${focusRef.trim().split('\n')[0] || 'none'}\n${snapshot}`;
+    }
+
+    async function refreshObservation() {
+      if(busy||closing||page.isClosed())throw new BrowserActionError('Browser observation is unavailable');
+      journeySignal.throwIfAborted();
+      busy=true;
+      try {
+        const timeout=Math.max(1,Math.min(5000,Math.ceil(deadline-performance.now())));
+        return await snapshot({timeout,signal:AbortSignal.any([journeySignal,AbortSignal.timeout(timeout)])});
+      } finally {busy=false;}
+    }
+
     async function step(action?: BrowserAction) {
       if (signal.aborted) throw new BrowserActionError('Browser journey cancelled');
       if (journeySignal.aborted) throw new BrowserActionError('Browser journey time limit reached');
@@ -267,19 +293,7 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
           if (performance.now() + 100 > settleUntil) break;
           await delay(100, undefined, { signal: stepSignal });
         } while (pending.size);
-        const url = page.url();
-        if (url !== 'about:blank' && !allowed(new URL(url), origin)) {
-          throw new BrowserActionError('Browser reached a blocked location');
-        }
-        const focusRef = await page.locator(':focus').count() === 1
-          ? await page.locator(':focus').ariaSnapshot({ depth: 1, ...timing() }) : '';
-        const snapshot = (await page.ariaSnapshot({ mode: 'ai', ...timing() })).slice(0, 16_000);
-        const refs = snapshot.split('\n').flatMap(line => {
-          const ref = /\[ref=((?:f\d+)?e\d+)\]/.exec(line)?.[1];
-          return ref && !line.includes('[aria-hidden]') ? [page.getByRef(ref)] : [];
-        });
-        observed = refs.reduce<Locator | undefined>((locators, ref) => locators ? locators.or(ref) : ref, undefined);
-        return `URL: ${cleanUrl(url)}\nFocused: ${focusRef.trim().split('\n')[0] || 'none'}\n${snapshot}`;
+        return snapshot(timing());
       })();
       try {
         const cancelled = new Promise<never>((_, reject) => {
@@ -317,7 +331,7 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
     }
 
     return {
-      page, actions, capabilities, networkEvents,
+      page, actions, capabilities, networkEvents, refreshObservation,
       observe: () => step(),
       execute: async action => {
         const parsed = BrowserActionSchema.safeParse(action);
@@ -327,7 +341,6 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
       close: () => closing ??= (async () => {
         let artifactError = false;
         try {
-          await session.tracing.stop({ path: join(artifactDirectory, 'trace.zip') }).catch(() => { artifactError = true; });
           if (!page.isClosed()) {
             await page.screenshot({ path: join(artifactDirectory, 'final.png'), timeout: 2_000 }).catch(() => { artifactError = true; });
           }

@@ -61,6 +61,7 @@ async function existingArtifacts(root: string, run: RunRecord) {
 
   const artifacts: string[] = [];
   for (const item of new Set(run.artifacts)) {
+    if(item.endsWith('/trace.zip'))continue;
     const parts = item.split('/');
     if (parts[0] !== run.id || parts.length < 2 ||
         parts.some(part => !part || part === '.' || part === '..' || part.includes('\\'))) continue;

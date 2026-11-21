@@ -1,0 +1,13 @@
+import {spawn} from 'node:child_process';
+import {readFile,writeFile} from 'node:fs/promises';
+import {fileURLToPath} from 'node:url';
+import {join} from 'node:path';
+import {releaseSourceId} from '../apps/seller-demo/lib/build';
+const root=fileURLToPath(new URL('../apps/seller-demo/',import.meta.url));
+const sourceId=await releaseSourceId(root);
+const child=spawn('pnpm',['exec','next','build'],{cwd:root,stdio:'inherit',env:process.env});
+const code=await new Promise<number>((resolve,reject)=>{child.on('error',reject);child.on('exit',code=>resolve(code??1));});
+if(code!==0)process.exit(code);
+if(await releaseSourceId(root)!==sourceId)throw new Error('Source changed while building; rebuild before testing');
+const buildId=(await readFile(join(root,'.next/BUILD_ID'),'utf8')).trim();
+await writeFile(join(root,'.next/lastmile-source.json'),JSON.stringify({sourceId,buildId}));

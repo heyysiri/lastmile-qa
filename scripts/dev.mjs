@@ -15,7 +15,8 @@ const defaults = {
 };
 const env = { ...defaults, ...process.env, NEXT_TELEMETRY_DISABLED: '1' };
 const names = ['runner', 'seller-demo', 'lastmile'];
-const children = names.map(name => spawn('pnpm', ['--filter', `@lastmile/${name}`, 'dev'], { cwd: root, env, stdio: 'inherit', detached: true }));
+const command = process.argv.includes('--production') ? 'start' : 'dev';
+const children = names.map(name => spawn('pnpm', ['--filter', `@lastmile/${name}`, command], { cwd: root, env, stdio: 'inherit', detached: true }));
 let stopping = false;
 function stop(code = 0) {
   if (stopping) return;
