@@ -5,7 +5,7 @@ import type {EvidenceRun} from './runtime';
 
 const id=z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/);
 const hash=z.string().regex(/^[a-f0-9]{64}$/);
-const sourcePath=z.string().max(240).regex(/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[a-zA-Z0-9_./[\]-]+$/);
+const sourcePath=z.string().max(240).regex(/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[a-zA-Z0-9_$./[\]-]+$/);
 export const SuggestJourneysRequestSchema=z.object({requestId:id,objective:z.string().trim().min(1).max(2000).optional()}).strict();
 export const PrepareRepairRequestSchema=z.object({requestId:id,executionId:id}).strict();
 export const VerifyRepairRequestSchema=z.object({requestId:id,patchHash:hash}).strict();

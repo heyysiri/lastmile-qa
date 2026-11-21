@@ -26,6 +26,15 @@ beforeEach(async () => {
 });
 afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
 
+it('creates and applies an exact patch to a framework route file with a dollar parameter',async()=>{
+ const path='apps/seller-demo/lib/products_.$id.tsx';
+ await writeFile(join(root,path),'export const title = "wrong";');
+ const policy={editable:[path]};
+ const patch=await createRepairPatch(root,policy,{summary:'Preserve the full title',changes:[{path,search:'"wrong"',replace:'"right"'}]});
+ await applyRepairPatch({tree:root,policy,patch});
+ expect(await readFile(join(root,path),'utf8')).toBe('export const title = "right";');
+});
+
 it('copies tracked sources while excluding environments, state, and untracked files', async () => {
   await mkdir(join(root, '.data'));
   await writeFile(join(root, '.data/fake.sqlite'), 'fake');
