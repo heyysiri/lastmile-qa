@@ -363,3 +363,62 @@ it('fails before the provider when complete editable source exceeds the coding i
   expect(f.propose).not.toHaveBeenCalled();
   expect(await readdir(f.workspaceRoot)).toEqual([]);
 });
+
+// The frozen journey was authored against an earlier implementation; the run's snapshot has the current one.
+function releaseWithEarlierImplementation(f: Awaited<ReturnType<typeof fixture>>) {
+  f.job.sourceRun.request = { requestId: 'release', mode: 'release' };
+  const older = "module.exports = { primary: 'older wrong', control: 'older ok' };";
+  const [implementation, oracle] = f.job.sourceRun.results[0].checks[0].sources;
+  Object.assign(implementation, { hash: hashBytes(older), excerpt: older });
+  return { implementation, oracle };
+}
+
+it('repairs a release regression whose frozen requirement check cites implementation that changed since the journey was frozen', async () => {
+  const f = await fixture();
+  releaseWithEarlierImplementation(f);
+  const job = await f.reviewed();
+  const input = f.propose.mock.calls[0][0] as { citations: { path: string; historical?: boolean }[]; sources: { path: string; content: string }[] };
+  expect(input.citations.filter(citation => citation.historical).map(citation => citation.path)).toEqual([entry]);
+  expect(input.citations.find(citation => citation.path === proof)?.historical).toBeUndefined();
+  expect(input.sources).toEqual([{ path: entry, content: code }]);
+  expect((await f.runtime.verify(job, secrets)).outcome).toBe('verified');
+  expect(await readFile(join(f.repositoryPath, entry), 'utf8')).toBe(code);
+});
+
+it('keeps explore runs strict about changed implementation citations', async () => {
+  const f = await fixture();
+  releaseWithEarlierImplementation(f);
+  f.job.sourceRun.request = { requestId: 'explore', mode: 'explore' };
+  expect((await f.runtime.prepare(f.job, secrets)).error).toMatch(/citation|stale/i);
+  expect(f.propose).not.toHaveBeenCalled();
+});
+
+it.each([
+  ['changed requirement', (f: Awaited<ReturnType<typeof fixture>>) => {
+    Object.assign(releaseWithEarlierImplementation(f).oracle, { hash: hashBytes('Older requirement.'), excerpt: 'Older requirement.' });
+  }],
+  ['implementation-based expectation', (f: Awaited<ReturnType<typeof fixture>>) => {
+    releaseWithEarlierImplementation(f);
+    for (const result of f.job.sourceRun.results) result.checks[0].basis = result.journey.checks[0].basis = 'implementation';
+  }],
+  ['requirement basis without current requirement evidence', (f: Awaited<ReturnType<typeof fixture>>) => {
+    const { implementation } = releaseWithEarlierImplementation(f);
+    for (const result of f.job.sourceRun.results) result.checks[0].sources = result.journey.checks[0].sources = [implementation];
+  }],
+])('rejects a release run with a stale %s', async (_name, stale) => {
+  const f = await fixture();
+  stale(f);
+  expect((await f.runtime.prepare(f.job, secrets)).error).toMatch(/citation|stale/i);
+  expect(f.propose).not.toHaveBeenCalled();
+});
+
+it('does not turn a removed historical implementation path into an editable file', async () => {
+  const f = await fixture();
+  releaseWithEarlierImplementation(f);
+  const removed = { path: 'packages/removed/old.js', startLine: 1, endLine: 1, hash: hashBytes('gone'), excerpt: 'gone' };
+  for (const result of f.job.sourceRun.results) result.checks[0].sources.push(removed);
+  await f.reviewed();
+  const input = f.propose.mock.calls[0][0] as { editable: string[]; sources: { path: string }[] };
+  expect(input.editable).toEqual([entry]);
+  expect(input.sources.map(source => source.path)).toEqual([entry]);
+});
