@@ -1,11 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import type { RunRecord } from '@lastmile/contracts';
 import type { EvidenceRun } from '@lastmile/contracts/runtime';
 import { ReplayLauncher } from './ReplayLauncher';
 import { InvestigationPanel } from './InvestigationPanel';
 import { ApiFailure, api } from '../lib/api';
+import { populationHref } from '../lib/populations';
 import { artifactHref, displayValue, fieldName, RunChecks, RunScreenshot, RunSteps } from './RunEvidence';
 import { StudioBack, StudioError } from './Studio';
 import { Pending, StatusBadge } from './ui';
@@ -72,9 +74,13 @@ export function RunDetail({ id }: { id: string }) {
         <RunSteps run={run} />
       </section>
 
-      {run.verdict === 'passed' && run.evidence?.finishedByAgent && !run.evidence.replayHash && <ReplayLauncher run={run} />}
-      {run.verdict === 'inconclusive' && <p className="muted">To corroborate this outcome, open a passing AI-guided run of the same scenario and replay its path under this context.</p>}
-      {run.verdict === 'failed' && run.evidence && <InvestigationPanel run={run} />}
+      {run.continuity ? <p className="note">
+        Compare releases from the population’s checkpoint controls. <Link href={populationHref(run.continuity.populationId)}>Open population</Link>
+      </p> : <>
+        {run.verdict === 'passed' && run.evidence?.finishedByAgent && !run.evidence.replayHash && <ReplayLauncher run={run} />}
+        {run.verdict === 'inconclusive' && <p className="muted">To corroborate this outcome, open a passing AI-guided run of the same scenario and replay its path under this context.</p>}
+        {run.verdict === 'failed' && run.evidence && <InvestigationPanel run={run} />}
+      </>}
 
       <details className="studio-card studio-disclosure technical-details">
         <summary>Configuration and run metadata</summary>

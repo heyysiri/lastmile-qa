@@ -9,6 +9,7 @@ import { api, ApiFailure, useLoad } from '../lib/api';
 import { newRequestId } from '../lib/editor';
 import { executionHref, plural, StudioBack, StudioError } from './Studio';
 import { fieldName } from './RunEvidence';
+import { PopulationEnrollment } from './PopulationEnrollment';
 import { TesterEditor } from './TesterEditor';
 import { Pending } from './ui';
 
@@ -186,6 +187,8 @@ function ReviewEditor({ initial, application, launchReady, readinessMessage, che
       </div>
 
       <aside className="review-sidebar">
+        <PopulationEnrollment study={saved} disabled={Boolean(busy) || dirty || conflict || !workflowsAvailable}
+          onStale={() => setConflict(true)} />
         <section className="studio-card launch-card" aria-labelledby="run-study-title">
           <div className="card-heading"><span className="icon-tile lilac"><Play size={18} aria-hidden="true" /></span><h2 id="run-study-title">Run this study</h2></div>
           <p>Each tester gets a fresh browser session. The run keeps a snapshot of the saved revision and app build.</p>

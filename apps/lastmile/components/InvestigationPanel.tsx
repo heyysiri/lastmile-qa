@@ -15,7 +15,7 @@ export function InvestigationPanel({run}:{run:EvidenceRun}) {
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState<ApiFailure|null>(null);
   const pending=useRef<InvestigationRequest|null>(null);
-  const controls=(runs.data||[]).filter(r=>r.verdict==='passed'&&r.evidence&&r.evidence.buildId===run.evidence?.buildId&&r.evidence.scenarioHash===run.evidence?.scenarioHash&&r.evidence.finishedByAgent);
+  const controls=(runs.data||[]).filter(r=>!r.continuity&&r.verdict==='passed'&&r.evidence&&r.evidence.buildId===run.evidence?.buildId&&r.evidence.scenarioHash===run.evidence?.scenarioHash&&r.evidence.finishedByAgent);
   useEffect(()=>{
     let stop=false; let timer:ReturnType<typeof setTimeout>;
     const tick=async()=>{

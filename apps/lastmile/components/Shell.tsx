@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ChevronDown, FlaskConical, History, SlidersHorizontal } from 'lucide-react';
+import { ChevronDown, FlaskConical, History, SlidersHorizontal, UsersRound } from 'lucide-react';
 import { api, useLoad } from '../lib/api';
 
 const advanced = [
@@ -18,15 +18,18 @@ export function Shell({ children }: { children: React.ReactNode }) {
     <div className="shell">
       <a className="skip-link" href="#main-content">Skip to content</a>
       <aside className="side">
-        <Link href="/" className="brand">
+        <Link href="/populations" className="brand">
           <span className="brand-mark" aria-hidden="true"><FlaskConical size={20} /><i /></span>
           <span>LastMile<small>QA studio</small></span>
         </Link>
         <nav className="nav" aria-label="Primary">
+          <Link href="/populations" aria-current={path.startsWith('/populations') ? 'page' : undefined}>
+            <UsersRound size={17} aria-hidden="true" /> Populations
+          </Link>
           <Link href="/" aria-current={path === '/' || /^\/studies\/[^/]+$/.test(path) ? 'page' : undefined}>
             <FlaskConical size={17} aria-hidden="true" /> Studies
           </Link>
-          <Link href="/executions" aria-current={path === '/executions' || path.includes('/executions/') ? 'page' : undefined}>
+          <Link href="/executions" aria-current={path === '/executions' || path.startsWith('/studies/') && path.includes('/executions/') ? 'page' : undefined}>
             <History size={17} aria-hidden="true" /> History
           </Link>
           <details className="nav-advanced" open={advanced.some(item => path.startsWith(item.href)) || undefined}>

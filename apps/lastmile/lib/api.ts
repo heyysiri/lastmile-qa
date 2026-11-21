@@ -1,4 +1,5 @@
 import type { EvidenceRun, InvestigationRecord, InvestigationRequest } from '@lastmile/contracts/runtime';
+import type { ApplicationContext, EnrollPopulationRequest, LaunchPopulationRequest, Population, PopulationDetail, PopulationExecution, PopulationExecutionDetail } from '@lastmile/contracts/populations';
 import type { GenerateStudyRequestSchema, LaunchStudyRequestSchema, SaveStudyRequestSchema, Study, StudyApplication, StudyExecution, StudyExecutionDetail } from '@lastmile/contracts/studies';
 import type { infer as Infer } from 'zod';
 import type { ContextPack, ScenarioDefinition } from '@lastmile/contracts';
@@ -32,6 +33,13 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 
 export const api = {
   applications: () => call<StudyApplication[]>('GET', 'applications'),
+  applicationContext: (id: string) => call<ApplicationContext>('GET', `applications/${encodeURIComponent(id)}/context`),
+  populations: () => call<Population[]>('GET', 'populations'),
+  population: (id: string) => call<PopulationDetail>('GET', `populations/${encodeURIComponent(id)}`),
+  enrollPopulation: (request: EnrollPopulationRequest) => call<Population>('POST', 'populations', request),
+  launchPopulation: (id: string, request: LaunchPopulationRequest) => call<PopulationExecution>('POST', `populations/${encodeURIComponent(id)}/executions`, request),
+  populationExecutions: () => call<PopulationExecution[]>('GET', 'population-executions'),
+  populationExecution: (id: string) => call<PopulationExecutionDetail>('GET', `population-executions/${encodeURIComponent(id)}`),
   studies: () => call<Study[]>('GET', 'studies'),
   study: (id: string) => call<Study>('GET', `studies/${encodeURIComponent(id)}`),
   generateStudy: (request: Infer<typeof GenerateStudyRequestSchema>) => call<Study>('POST', 'studies/generate', request),
