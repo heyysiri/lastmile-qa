@@ -31,7 +31,8 @@ const fixture = `
   <input name="twin" value="visible-twin"><input name="twin" value="hidden-twin" style="display:none">
   <input type="hidden" name="ghost" value="invisible"><input name="ghost" value="zero" style="visibility:hidden">
   <select name="plan"><option value="a">A</option><option value="b">B</option></select>
-  <input type="password" name="secret_pw" value="hunter2">
+  <label>Password<input type="password" name="secret_pw" value="hunter2"></label>
+  <label>Password<input type="password" name="register_pw"></label>
   <input name="${PRIVATE_ACCOUNT}-field" value="x">
   <label>Contact <input name="contact" value="c"></label>
   <label for="wired">Wired label</label><input id="wired" name="wired" value="w">
@@ -188,7 +189,7 @@ describe('browser session', () => {
     expect(lines.filter(line => line.startsWith('- fieldName "dup"'))).toHaveLength(2);
     expect(lines.filter(line => line.startsWith('- fieldName "twin"'))).toHaveLength(1);
     expect(lines.filter(line => line.startsWith('- fieldName "plan"'))).toHaveLength(1);
-    for (const hidden of ['ghost', 'secret_pw', 'n'.repeat(250)]) expect(observation).not.toContain(hidden);
+    for (const hidden of ['ghost', 'n'.repeat(250)]) expect(observation).not.toContain(hidden);
     expect(observation).not.toContain(PRIVATE_ACCOUNT);
     for (const value of ['Widget', 'plain-y', 'hunter2', 'visible-twin', 'hidden-twin']) expect(lines.join('\n')).not.toContain(value);
     expect(await browserSession.refreshObservation()).toContain('- fieldName "stockLevels.0.stockOnHand"');
@@ -219,4 +220,16 @@ describe('browser session', () => {
     expect(observation).not.toContain('Contact');
     expect(fieldLines(observation)).toContain('- fieldName "contact" nearbyLabel "[private]"');
   });
+});
+
+it('can sign in through duplicate password labels using observed field names without publishing secret values',async()=>{
+ const password='fixture-private-password';
+ const browserSession=await session({inputs:{accountPassword:password},redactValues:[password]});
+ const observation=await browserSession.execute({tool:'navigate',path:'/'});
+ expect(fieldLines(observation)).toContain('- fieldName "secret_pw" nearbyLabel "Password"');
+ await browserSession.execute({tool:'fill',locator:byName('secret_pw'),value:{input:'accountPassword'}});
+ expect(await browserSession.page.locator('[name="secret_pw"]').inputValue()).toBe(password);
+ expect(await browserSession.page.locator('[name="register_pw"]').inputValue()).toBe('');
+ expect(await browserSession.refreshObservation()).not.toContain(password);
+ expect(JSON.stringify(browserSession.actions)).not.toContain(password);
 });

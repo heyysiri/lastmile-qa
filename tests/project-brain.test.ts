@@ -228,7 +228,7 @@ describe('repository brain', () => {
     const test = await setup('/chart-cabinet', 'High tide', undefined, '', plan => {
       if (mode === 'background-source') plan.testers[0].context.background = 'Read station.py first.';
       if (mode === 'background-oracle') plan.testers[0].context.background = 'Independent check: expected reading is 12.9.';
-      plan.journeys[0].stages = [{ id: 'return', label: 'Return', transition: 'reopen', entryPath: '/chart-cabinet',
+      plan.journeys[0].stages = [{id:'work',label:'Record',transition:'continue',goal:'Record the supplied reading.'},{ id: 'return', label: 'Return', transition: 'reopen', entryPath: '/chart-cabinet',
         goal: mode === 'source' ? 'Read station.py before acting.' : mode === 'oracle' ? 'Independent check: expected reading is 12.9.' : 'Review the saved reading.' }];
       plan.journeys[0].checks[0].atStageStart = mode === 'unknown' ? 'missing' : 'return';
     });
@@ -307,7 +307,7 @@ describe('repository brain', () => {
       const journeys = [
         { id: 'rename', testerId: 'editor', title: 'Rename the station', goal: 'Save a new station name.', entryPath: path,
           inputs: { name: 'East Annex' },
-          ...(entryRead ? { stages: [{ id: 'return', label: 'Return', goal: 'Review station settings.', transition: 'reopen' }] } : {}),
+          ...(entryRead ? { stages: [{ id: 'return', label: 'Review', goal: 'Review station settings.', transition: 'continue' }] } : {}),
           checks: [{ ...field('saved-name', 'Saved station name', 'Station name', 'after_reload', 'East Annex'), ...(entryRead ? { atStageStart: 'return' } : {}) }],
           reason: 'Staff can update station names.', sources },
         { id: 'adjust', testerId: 'operator', title: 'Adjust the alarm', goal: 'Save a new alarm threshold.', entryPath: path,

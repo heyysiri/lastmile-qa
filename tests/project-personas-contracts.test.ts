@@ -23,3 +23,8 @@ it('keeps legacy single-stage journeys valid and rejects unbounded staged runs',
  expect(ProjectJourneySchema.safeParse(journey()).success).toBe(true);
  expect(ProjectJourneySchema.safeParse({...journey(),stages:Array.from({length:5},(_,i)=>({id:`stage-${i}`,label:'Stage',goal:'Continue working',transition:'continue'}))}).success).toBe(false);
 });
+
+it('requires staged journeys to establish work before reopening the browser',()=>{
+ const data={...journey(),stages:[{id:'return',label:'Return',goal:'Continue the saved draft.',transition:'reopen'}]};
+ expect(ProjectJourneySchema.safeParse(data).success).toBe(false);
+});

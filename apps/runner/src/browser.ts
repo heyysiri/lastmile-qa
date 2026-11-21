@@ -100,7 +100,7 @@ const FIELD_METADATA_LIMIT = { lines: 60, characters: 3_000 };
 type FieldControl = { name: string; label: string };
 
 /**
- * Runs in the page: visible, named, non-password controls with nearby label text, in document order.
+ * Runs in the page: visible, named controls with nearby label text, in document order.
  * It deliberately declares no nested functions: tsx's keepNames would inject helpers that a
  * serialized function cannot resolve in the page.
  */
@@ -110,7 +110,7 @@ function collectFieldControls(elements: Element[], limits: typeof FIELD_LIMITS):
     const control = element as HTMLInputElement;
     const name = control.getAttribute('name') ?? '';
     const box = control.getBoundingClientRect();
-    if (!name || control.type === 'password' || !box.width || !box.height || getComputedStyle(control).visibility === 'hidden') continue;
+    if (!name || !box.width || !box.height || getComputedStyle(control).visibility === 'hidden') continue;
     const sibling = control.previousElementSibling;
     const parent = control.parentElement;
     let root: Element | null | undefined = control.labels?.[0];
@@ -129,7 +129,7 @@ function collectFieldControls(elements: Element[], limits: typeof FIELD_LIMITS):
   return found;
 }
 
-/** Exact `- fieldName "<JSON name>"` lines (optionally ` nearbyLabel "<JSON>"`), bounded, never values or passwords. */
+/** Exact `- fieldName "<JSON name>"` lines (optionally ` nearbyLabel "<JSON>"`), bounded, never field values (including passwords). */
 function formatFieldMetadata(controls: FieldControl[], redact: (text: string) => string): { text: string; names: Set<string> } {
   const header = 'Form fields (exact HTML name attributes of visible controls; use locator by "fieldName"):\n';
   const lines: string[] = [];

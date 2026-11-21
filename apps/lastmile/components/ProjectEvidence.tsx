@@ -202,7 +202,7 @@ function CheckList({ checks }: { checks: ProjectCheckResult[] }) {
   return <ul className="observed-checks">{checks.map(check => <li key={check.id}>
     <div className="check-title">
       <strong>{check.label}</strong>
-      {check.atStageStart && <small>Checked on return, before the tester acts</small>}
+      {check.atStageStart && <small>Checked before the tester acts</small>}
       <span className={`pill pill-${check.status === 'failed' ? 'peach' : check.status === 'passed' ? 'mint' : 'lilac'}`}>
         {check.status === 'not_evaluated' ? 'Not evaluated' : fieldName(check.status)}
       </span>
