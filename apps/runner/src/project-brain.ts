@@ -148,18 +148,26 @@ function mentionsObservedRoute(reference: SourceReference, observedRoutes: Set<s
 }
 
 function boundedObservation(text: string) {
-  if (text.length <= 5000) return text;
-  const header = text.slice(0, 4000).split('\n').slice(0, -1).join('\n');
-  const links = new Set(text.slice(header.length).split('\n').flatMap(line => {
-    const path = /^\s*- \/url: (\/\S+)$/.exec(line)?.[1];
-    return path && routeSchema.safeParse(path).success ? [path] : [];
-  }));
-  if (!links.size) return text.slice(0, 5000);
-  let result = header + '\nAdditional visible link paths:';
-  for (const path of links) {
-    if (result.length + path.length + 9 <= 5000) result += '\n- /url: ' + path;
+  const limit = 5000;
+  if (text.length <= limit) return text;
+  // Keep URLs with their link labels so the planner can connect routes to visible controls.
+  const entries = text.replace(/\n[ \t]*- \/url: ([^\n]*)/g, (line, path) => routeSchema.safeParse(path).success ? line : '')
+    .split(/\n(?![ \t]*- \/url: )/);
+  const fieldContext = new RegExp(`^\\s*- (?:${labelRoles}|main|form|heading)(?=\\s|:|$)`);
+  const actions = /^\s*- (?:button|link|menuitem|menuitemcheckbox|menuitemradio|tab|treeitem)(?=\s|:|$)/;
+  const ranked = entries.map((entry, index) => ({ entry, index, priority:
+    /^(?:URL|Focused): /.test(entry) || fieldContext.test(entry) ? 0 : actions.test(entry) ? 1 : 2,
+  })).sort((a, b) => a.priority - b.priority);
+
+  const kept = new Set<number>();
+  let remaining = limit;
+  for (const { entry, index } of ranked) {
+    const size = entry.length + Number(kept.size > 0);
+    if (size > remaining) continue;
+    kept.add(index);
+    remaining -= size;
   }
-  return result;
+  return entries.filter((_, index) => kept.has(index)).join('\n');
 }
 
 function withDeadline<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {

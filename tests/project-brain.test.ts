@@ -215,6 +215,33 @@ describe('repository brain', () => {
     expect(discovery.observations[0].text.length).toBeLessThanOrEqual(5000);
   });
 
+  it('grounds checks in form controls beyond a long navigation snapshot', async () => {
+    const path = '/workspace/';
+    project.appUrl += path;
+    const test = await setup(path, 'High tide');
+    await writeFile(join(fixture, 'station.py'), '# High tide readings\n');
+    test.observe.mockResolvedValueOnce([{ path, accountId, observedAt: now, text: [
+      '- heading "High tide"',
+      '- navigation:',
+      '  - listitem: Station navigation entry\n'.repeat(150).trimEnd(),
+      '- main:',
+      '  - spinbutton "High tide" [ref=e151]: "12.9"',
+      '  - button "Save reading" [ref=e152]',
+      '  - link "Read saved reading" [ref=e153]:',
+      '    - /url: /workspace/readings/17',
+      `  - text: ${username} ${password}`,
+    ].join('\n') }]);
+
+    const discovery = await test.run();
+
+    const { text } = discovery.observations[0];
+    expect(text.length).toBeLessThanOrEqual(5000);
+    expect(text).toContain('- spinbutton "High tide"');
+    expect(text).toContain('- button "Save reading"');
+    expect(text).toMatch(/- link "Read saved reading"[^\n]*\n\s+- \/url: \/workspace\/readings\/17/);
+    expect(discovery.plan.gaps.join(' ')).not.toMatch(/locator/i);
+  });
+
   it.each([['/chart-cabinet', 'High tide'], ['/survey-locker', 'Water level']])(
     'discovers an arbitrary %s route and distinguishes requirement from implementation', async (route, label) => {
       const test = await setup(route, label);
