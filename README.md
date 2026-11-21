@@ -37,7 +37,7 @@ To advance the actual customers, choose **Continue their journeys** with release
 
 ## Generate the initial audience
 
-The connected app currently supports store setup and inventory updates. Domain text helps describe the audience; it does not automatically connect another application or add business features. The generator uses registered workflow outcomes and current browser observations. It cannot invent backend fields or upload fixtures.
+The default seller app supports store setup and inventory updates. Oscar mode supports customer profile edits and basket updates. Domain text helps describe the audience; it does not automatically connect another application or add business features. The generator uses registered workflow outcomes and current browser observations. It cannot invent backend fields or upload fixtures.
 
 Try this audience brief with three testers:
 
@@ -58,7 +58,7 @@ The browser engine uses an independent Strands agent per tester. Each has its ow
 
 The verifier independently checks visible UI and authenticated persisted state against the registered outcome contract. Changing a tester's goal does not silently rewrite its outcome contract. Review both before launch. Language, familiarity and background are behavioral guidance, not verified simulation of real people; browser locale does not translate the app. Viewports are emulated, not physical devices.
 
-General application onboarding, automatic next-task proposals, richer file integrations, evidence-backed repair proposals, patch approval, genuine post-repair verification and AWS deployment are later checkpoints. No arbitrary external URL execution or autonomous application patches are enabled here.
+Grounded next-task proposals and reviewed, isolated code repairs are implemented in P2 below. General application onboarding, richer file integrations and AWS deployment remain later checkpoints. Arbitrary external URLs and automatic patch application are not enabled.
 
 The earlier replay and controlled-comparison engines remain available for corroborating verified failures. Their historical runs and configuration are retained. Lower-level configuration is an advanced workflow; it is no longer the product's starting point.
 
@@ -79,3 +79,42 @@ The seller app visibly labels this condition and cancels store saves after 700 m
 Run targeted tests for changed components. `pnpm typecheck`, scoped eslint and both Next builds verify the integrated workspace. Playwright UI tests use intercepted or isolated no-model APIs; explicit live scripts use OpenAI. The browser-seller integration test requires the seller app running.
 
 SQLite databases are in `.data/`; evidence is in `artifacts/`. Evidence includes screenshots, semantic steps, assertions and sanitized network diagnostics. Raw Playwright trace archives are not exported because they contain session credentials; legacy raw trace downloads are also disabled. These, `.env`, project plans and local execution notes are ignored by Git. No production data migration, push, merge or deployment is implied. AWS deployment is the final planned stage after local acceptance. AWS is for hosting only; no AWS AI or memory services are used.
+
+## P2: grounded journeys and reviewed repairs
+
+The larger integration uses **Django Oscar 4.2.1**, pinned to upstream commit `d0a70850abf8e4229d4971aa7e8f4643326ec9f3`. Its application source contains about 43,000 Python lines and 13,600 HTML template lines, excluding dependencies. It includes catalogue, basket, checkout, shipping, orders, accounts and a management dashboard. LastMile currently connects profile edits and basket updates; it does not claim to cover every module.
+
+Install Python 3.12 through `uv` and run `pnpm oscar:setup` once. This downloads the pinned BSD-licensed source into an ignored local directory, builds its static assets and seeds a catalogue. It preserves an existing database. In separate terminals run:
+
+```sh
+pnpm oscar:start
+LASTMILE_APPLICATION=oscar pnpm start
+```
+
+Oscar runs at http://127.0.0.1:8000/en-gb/catalogue/. The dashboard remains http://127.0.0.1:3000. `pnpm build` rebuilds LastMile before its production start. The Oscar source and trusted adapter are checked as a served release; restart Oscar after changing them. The original seller fixture remains available for controlled tests.
+
+Generate two customers with this audience:
+
+> One returning customer uses the returning-customer profile workflow with four mugs in their basket. One new customer uses the new-customer profile workflow with one mug. Both edit only their first name, keep the existing email and last name, save, and finish on the profile confirmation page. Use English, desktop, pointer interaction and normal connectivity.
+
+Review and enroll them. Continue both with first names `Morgan` and `Jamie`, then save the passing release as your baseline. These are real browser/model journeys against Oscar's existing pages and ORM, not scripted UI replacements. Initial fixtures are known starting conditions; only subsequent recorded journeys are observed history.
+
+To demonstrate a customer-state regression, stop Oscar and restart it with:
+
+```sh
+OSCAR_DEMO_DEFECT=reset-basket-on-profile-save pnpm oscar:start
+# Restart the idle LastMile stack in its separate terminal with the same setting:
+LASTMILE_APPLICATION=oscar OSCAR_DEMO_DEFECT=reset-basket-on-profile-save pnpm start
+```
+
+Compare the healthy baseline. Expect the returning customer's basket preservation check to fail (expected 4, actual 1), while the one-mug control passes. Original accounts retain 4 and 1; comparisons use isolated clones. This defect is deliberately injected in the local Oscar copy, not claimed as an upstream bug.
+
+On an eligible comparison, **Prepare repair** reproduces every case in a private source/database copy before proposing code. Review the source changes, then **Verify patch**. Verification executes the same saved actions, inputs and checks for both failed customers and passing controls. It makes no browser-model calls. “Verified” means the isolated patch passed all retained checks; it does not apply the patch to your checkout or deploy anything. A patch that leaves the basket reset in place must be rejected. Missing evidence, stale builds and replay failures remain inconclusive.
+
+The runner needs the same `OSCAR_DEMO_DEFECT` setting as the connected Oscar release when preparing a repair. Source, credentials and build commands come from configured adapters; the model cannot edit requirements, fixtures or the verification harness. This is local reviewed-code execution, not a secure multi-tenant sandbox. Checks cover the requested first name, retained last name, basket quantity, addresses and order count. Clone email is a fresh login identity, so email preservation is not an independent assertion. Checkpoints currently cover profile, open basket and addresses; accounts with orders are refused until full order cloning is implemented.
+
+**Suggest next journeys** uses selected source, requirements, changed digests and recorded customer evidence. It does not run anything until you apply the suggestions and launch the editable tasks. Suggestions remain hypotheses to review, especially when the source or requirements are incomplete. A retry after a lost response reuses the original request; an explicit new generation makes a new model call.
+
+For a manual P2 check, open the Oscar population, choose **Compare a release**, use label `My manual checkpoint`, and select the latest passing **Oscar healthy profile update**. Expect one basket regression (4 expected, 1 observed), one still-passing control and no model calls. A verified private repair does not change that connected release. Review a repair's reproduction, source changes and verification separately; a model can propose an ineffective fix, which must be rejected.
+
+To test a different journey, use **Continue their journeys**, select **Update existing basket** for both customers and supply quantities `6` and `2`. Give each the goal to update only the quantity and remain on the basket page. Expect those quantities to persist while the saved first and last names remain unchanged. This advances the real tester accounts and adds history; earlier release comparisons still use their immutable starting checkpoints.
