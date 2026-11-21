@@ -17,9 +17,11 @@
     "demo:investigate": "tsx scripts/demo-investigate.ts",
     "oscar:setup": "node scripts/setup-oscar.mjs",
     "oscar:start": "ENABLE_TEST_API=true TEST_API_TOKEN=local-development-test .local-work/p2/oscar-venv/bin/python integrations/oscar/manage.py runserver 127.0.0.1:8000 --noreload",
-    "oscar:test": ".local-work/p2/oscar-venv/bin/python integrations/oscar/manage.py test test_bridge"
+    "oscar:test": ".local-work/p2/oscar-venv/bin/python integrations/oscar/manage.py test test_bridge",
+    "mcp": "node scripts/mcp.mjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/server": "2.4.0",
     "@strands-agents/sdk": "1.26.0",
     "better-sqlite3": "13.2.0",
     "dotenv": "^17.2.3",
@@ -29,6 +31,7 @@
     "zod": "^4.3.5"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "2.4.0",
     "@playwright/test": "^1.58.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.19.7",
