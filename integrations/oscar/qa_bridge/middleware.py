@@ -88,7 +88,7 @@ def state(account):
     addresses = list(get_model('address', 'UserAddress').objects.filter(user=account.user).order_by('id').values('title','first_name','last_name','line1','line2','line3','line4','state','postcode','country_id','phone_number','notes','is_default_for_shipping','is_default_for_billing'))
     for address in addresses:
         address['phone_number'] = str(address['phone_number'])
-    return {'namespaceId': str(account.pk), 'profile': {'firstName': account.user.first_name, 'lastName': account.user.last_name, 'email': account.user.email}, 'basket': {'quantity': sum(line['quantity'] for line in lines), 'lines': lines}, 'addresses': addresses, 'orderCount': get_model('order','Order').objects.filter(user=account.user).count()}
+    return {'namespaceId': str(account.pk), 'profile': {'firstName': account.user.first_name, 'lastName': account.user.last_name, 'email': account.user.email}, 'basket': {'quantity': sum(line['quantity'] for line in lines), 'lines': lines}, 'addresses': addresses, 'addressesDigest': digest(addresses), 'orderCount': get_model('order','Order').objects.filter(user=account.user).count()}
 
 def get_account(identity):
     try:
@@ -126,8 +126,8 @@ def clone(identity, payload):
     account = create_account('clone:'+uuid.uuid4().hex, checkpoint.account.fixture)
     user = account.user
     user.first_name = saved['profile']['firstName']; user.last_name = saved['profile']['lastName']
-    user.email = saved['profile']['email']
-    user.save(update_fields=['first_name','last_name','email'])
+    # Oscar requires unique emails during profile edits. Clone identities are fresh; business state is retained.
+    user.save(update_fields=['first_name','last_name'])
     basket = basket_for(user)
     basket.lines.all().delete()
     for line in saved['basket']['lines']:

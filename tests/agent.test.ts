@@ -135,3 +135,18 @@ it('receives only its bounded observed history, never checkpoint or privileged r
  expect(prompt).toContain('Stock quantity 250');
  expect(prompt).not.toMatch(/private.requirement|checkpoint-private|digest-private|population-internal|state_equals/);
 });
+it('dispatches reviewed camel-case inputs through semantic role locators',async()=>{
+ const page=browser();
+ vi.spyOn(OpenAIModel.prototype,'stream').mockImplementation(async function*(){yield* toolCalls(['fill',{locator:{by:'role',value:'textbox',name:'First name'},value:{input:'firstName'}}],['finish',{status:'done'}]);});
+ const result=await runAgent(page as unknown as BrowserSession,{...run,inputs:{firstName:'Jamie'}},options);
+ expect(result.finished).toBe(true);
+ expect(page.execute).toHaveBeenCalledWith({tool:'fill',locator:{by:'role',value:'textbox',name:'First name'},value:{input:'firstName'}});
+});
+it('requests one model tool call at a time for a single browser page',async()=>{
+ vi.spyOn(OpenAIModel.prototype,'stream').mockImplementation(async function*(this:OpenAIModel){
+  expect(this.getConfig().params?.parallel_tool_calls).toBe(false);
+  yield* toolCalls(['finish',{status:'done'}]);
+ });
+ const result=await runAgent(browser() as unknown as BrowserSession,run,options);
+ expect(result.finished).toBe(true);
+});

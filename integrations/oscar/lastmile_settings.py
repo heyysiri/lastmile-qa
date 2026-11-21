@@ -5,7 +5,7 @@ from settings import *  # noqa: F403 - explicitly extend the pinned upstream san
 ROOT = Path(__file__).resolve().parents[2]
 OSCAR_SOURCE_ROOT = Path(os.environ.get('OSCAR_ROOT', ROOT / '.local-work/p2/oscar-upstream')).resolve()
 DATABASES['default']['NAME'] = os.environ.get('OSCAR_DATABASE_PATH', str(ROOT / '.data/oscar.sqlite'))  # noqa: F405
-DATABASES['default']['OPTIONS'] = {'timeout': 20}
+DATABASES['default']['OPTIONS'] = {'timeout': 20, 'transaction_mode': 'IMMEDIATE'}
 INSTALLED_APPS += ['qa_bridge']  # noqa: F405
 MIDDLEWARE.insert(0, 'qa_bridge.middleware.TestBridge')  # noqa: F405
 LASTMILE_TEST_ENABLED = os.environ.get('ENABLE_TEST_API') == 'true'

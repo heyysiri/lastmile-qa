@@ -39,6 +39,11 @@ class BridgeTests(TestCase):
         original=self.call('/api/test/state?namespaceId='+key).json()
         self.assertEqual(original['basket']['quantity'],4)
         self.assertEqual(clone['digest'],snapshot['digest'])
+        cloned_state=self.call('/api/test/state?namespaceId='+clone['namespaceId']).json()
+        self.assertNotEqual(cloned_state['profile']['email'],original['profile']['email'])
+        self.client.cookies[clone['cookie']['name']]=clone['cookie']['value']
+        saved=self.client.post('/en-gb/accounts/profile/edit/',{'first_name':'Clone','last_name':'River','email':cloned_state['profile']['email']})
+        self.assertEqual(saved.status_code,302)
         self.assertNotIn('password',json.dumps(snapshot))
 
     def test_profile_is_real_oscar_and_preserves_basket(self):

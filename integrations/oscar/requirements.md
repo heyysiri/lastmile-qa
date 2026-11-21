@@ -10,4 +10,4 @@ The returning-customer fixture starts with four mugs in its basket; the new-cust
 
 The optional reset-basket-on-profile-save regression is deliberately injected in a local copy of ProfileUpdateView for verification. It is not an upstream Oscar defect. With the flag enabled, a profile save resets each basket line to one. An actual code repair must preserve basket state with that same flag still enabled; toggling it off is not a repair.
 
-Snapshot coverage: user profile, open basket lines and delivery addresses. Accounts with orders are refused for checkpoint cloning until order snapshot support exists. No real payments, outbound email, production credentials or external integrations.
+Snapshot coverage: profile fields, open basket lines and delivery addresses. Clones use distinct usernames, emails and sessions because Oscar enforces unique login identities; task inputs never contain those identity values. Accounts with orders are refused for checkpoint cloning until order snapshot support exists. No real payments, outbound email, production credentials or external integrations.
