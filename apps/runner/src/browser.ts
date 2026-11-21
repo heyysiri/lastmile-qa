@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { chromium, errors, type BrowserContext, type Locator, type Page, type Request } from 'playwright';
+import { chromium, errors, type BrowserContext, type BrowserContextOptions, type Locator, type Page, type Request } from 'playwright';
 import { resolveExpected, type AppliedCapability, type ContextPack, type InputValue, type LocatorSpec, type StepEvent } from '@lastmile/contracts';
 import { BrowserActionSchema, type BrowserAction, type RecordedAction } from '@lastmile/contracts/runtime';
 
@@ -9,7 +9,10 @@ type BrowserSessionOptions = {
   pack: ContextPack;
   inputs: Record<string, InputValue>;
   origin: string;
-  cookie: { name: string; value: string; path: string };
+  cookie?: { name: string; value: string; path: string };
+  storageState?: BrowserContextOptions['storageState'];
+  allowedOrigins?: string[];
+  redactValues?: string[];
   artifactDirectory: string;
   signal: AbortSignal;
   onStep: (step: StepEvent) => void;
@@ -23,13 +26,14 @@ export type BrowserSession = {
   actions: RecordedAction[];
   capabilities: AppliedCapability[];
   networkEvents: unknown[];
+  storageState(): ReturnType<BrowserContext['storageState']>;
   close(): Promise<void>;
 };
 
 export class BrowserActionError extends Error {}
 
-function allowed(url: URL, origin: string) {
-  if (!['http:', 'https:'].includes(url.protocol) || url.origin !== origin || url.username || url.password) return false;
+function allowed(url: URL, origin: string, extraOrigins: string[] = []) {
+  if (!['http:', 'https:'].includes(url.protocol) || ![origin,...extraOrigins].includes(url.origin) || url.username || url.password) return false;
   let path = url.pathname;
   try {
     while (/%[0-9a-f]{2}/i.test(path)) path = decodeURIComponent(path);
@@ -66,6 +70,8 @@ export async function replayPosition(page:Page):Promise<{url:string;focus:string
 export async function createBrowserSession(options: BrowserSessionOptions): Promise<BrowserSession> {
   const { pack, inputs, artifactDirectory, signal, onStep } = options;
   const origin = new URL(options.origin).origin;
+  const extraOrigins=(options.allowedOrigins??[]).map(value=>new URL(value).origin);
+  const redact=(text:string)=>(options.redactValues??[]).filter(Boolean).reduce((s,value)=>s.replaceAll(value,'[private]'),text);
   const deadline = performance.now() + 180_000;
   const journeySignal = AbortSignal.any([signal, AbortSignal.timeout(180_000)]);
   if (signal.aborted) throw new BrowserActionError('Browser journey cancelled');
@@ -76,8 +82,9 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
     const session = context = await browser.newContext({
       viewport: pack.viewport, locale: pack.locale, reducedMotion: pack.reducedMotion,
       serviceWorkers: 'block', acceptDownloads: false,
+      storageState: options.storageState,
     });
-    await session.addCookies([{ ...options.cookie, domain: new URL(origin).hostname, httpOnly: true }]);
+    if(options.cookie) await session.addCookies([{ ...options.cookie, domain: new URL(origin).hostname, httpOnly: true }]);
 
     const actions: RecordedAction[] = [];
     const networkEvents: unknown[] = [];
@@ -91,7 +98,7 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
       { factor: 'reducedMotion', status: 'applied', value: pack.reducedMotion },
       { factor: 'interaction', status: 'applied', value: pack.interaction },
       network,
-      { factor: 'inputs', status: Object.values(inputs).some(value => typeof value === 'object') ? 'unsupported' : 'applied', value: inputs },
+      { factor: 'inputs', status: Object.values(inputs).some(value => typeof value === 'object') ? 'unsupported' : 'applied', value: Object.fromEntries(Object.entries(inputs).map(([key,value])=>[key,typeof value==='string'?redact(value):value])) },
       { factor: 'preferredLanguage', status: 'guidance_only', value: pack.preferredLanguage },
       { factor: 'familiarity', status: 'guidance_only', value: { familiarity: pack.familiarity, knownTerms: pack.knownTerms } },
     ];
@@ -100,7 +107,7 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
     await session.routeWebSocket(/.*/, socket => {
       const url=new URL(socket.url());
       url.protocol=url.protocol==='wss:'?'https:':'http:';
-      if(allowed(url,origin))socket.connectToServer();
+      if(allowed(url,origin,extraOrigins))socket.connectToServer();
       else void socket.close();
     });
     session.on('page', popup => { if (popup !== page) void popup.close().catch(() => {}); });
@@ -132,7 +139,7 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
       const request = route.request();
       const url = new URL(request.url());
       try {
-        if (journeySignal.aborted || request.frame().page() !== page || !allowed(url, origin)) {
+        if (journeySignal.aborted || request.frame().page() !== page || !allowed(url, origin,extraOrigins)) {
           await route.abort('blockedbyclient');
           return;
         }
@@ -152,7 +159,7 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
       try {
         if (redirect && location) {
           const destination = new URL(location, event.request.url);
-          if (!allowed(destination, origin)) {
+          if (!allowed(destination, origin,extraOrigins)) {
             await cdp.send('Fetch.failRequest', { requestId: event.requestId, errorReason: 'BlockedByClient' });
             return;
           }
@@ -252,7 +259,7 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
           return ref && !line.includes('[aria-hidden]') ? [page.getByRef(ref)] : [];
         });
         observed = refs.reduce<Locator | undefined>((locators, ref) => locators ? locators.or(ref) : ref, undefined);
-        return `URL: ${cleanUrl(url)}\nFocused: ${focusRef.trim().split('\n')[0] || 'none'}\n${snapshot}`;
+        return redact(`URL: ${cleanUrl(url)}\nFocused: ${focusRef.trim().split('\n')[0] || 'none'}\n${snapshot}`);
     }
 
     async function refreshObservation() {
@@ -332,6 +339,7 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
 
     return {
       page, actions, capabilities, networkEvents, refreshObservation,
+      storageState:()=>session.storageState(),
       observe: () => step(),
       execute: async action => {
         const parsed = BrowserActionSchema.safeParse(action);

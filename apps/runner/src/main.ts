@@ -11,6 +11,7 @@ import {createJourneyPlanner} from './journey-planner';
 import {createOscarApplication} from './oscar-application';
 import {createRepairRuntime} from './repair-runtime';
 import {createOscarRepairAdapter} from './repair-oscar';
+import {createProjectRuntime} from './project-runtime';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 config({ path: resolve(root, '.env'), quiet: true });
@@ -38,6 +39,7 @@ try {
   ]};
   const journey = createJourneyExecutor({prepareSession:createPersistentSessionPreparer({origin,testToken}),origin,artifactRoot,testToken,apiKey,model});
   const app = createServer({
+    projectRuntime:apiKey?createProjectRuntime({privateRoot:resolve(root,'.data/projects'),artifactRoot,apiKey,model}):undefined,
     repairRuntime: apiKey ? createRepairRuntime({root:applicationRoot,workspaceRoot:resolve(root,'.data/repairs'),
       sellerDatabasePath:resolve(root,oscar?(process.env.OSCAR_DATABASE_PATH||'.data/oscar.sqlite'):(process.env.SELLER_DATABASE_PATH||'.data/seller-demo.sqlite')),
       artifactRoot,origin,testToken,apiKey,model,defect:oscar?process.env.OSCAR_DEMO_DEFECT:process.env.SELLER_DEMO_DEFECT},

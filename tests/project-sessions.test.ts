@@ -1,0 +1,21 @@
+import {createServer,type Server} from 'node:http';
+import {mkdtemp,readFile,rm,stat} from 'node:fs/promises';
+import {tmpdir} from 'node:os';import {join} from 'node:path';
+import {afterEach,expect,it,vi} from 'vitest';
+import {createProjectSessions} from '../apps/runner/src/project-sessions';
+import type {Project,ProjectSecrets} from '../packages/contracts/src/projects';
+const roots:string[]=[],servers:Server[]=[];
+afterEach(async()=>{await Promise.all(servers.splice(0).map(s=>new Promise<void>(r=>s.close(()=>r()))));await Promise.all(roots.splice(0).map(r=>rm(r,{recursive:true,force:true})));});
+it('authenticates through ordinary UI once, retains account binding, and never gives passwords to the actor',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'project-sessions-'));roots.push(root);
+ const server=createServer((q,r)=>{r.setHeader('content-type','text/html');if(q.url==='/login'){r.setHeader('set-cookie','login=staff; Path=/');r.end('<h1>Staff home</h1>');}else r.end(q.headers.cookie?.includes('login=staff')?'<h1>Staff home</h1>':'<label>Email<input></label><label>Password<input type="password"></label><a href="/login">Sign in</a>');});servers.push(server);await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
+ const origin=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
+ const project:Project={id:'project',name:'Staff application',repositoryPath:root,brief:'Test staff tasks',requirements:'',createdAt:'now',updatedAt:'now',status:'ready',progress:'Ready',appUrl:origin,allowedOrigins:[],accounts:[{id:'account',label:'Staff'}]};
+ const secrets:ProjectSecrets={accounts:[{id:'account',label:'Staff',username:'staff-private',password:'password-private'}]};
+ const actor=vi.fn(async(session,run)=>{expect(JSON.stringify(run)).not.toContain('password-private');await session.execute({tool:'fill',locator:{by:'label',value:'Email'},value:{input:'accountUsername'}});await session.execute({tool:'fill',locator:{by:'label',value:'Password'},value:{input:'accountPassword'}});expect(await session.observe()).not.toContain('staff-private');await session.execute({tool:'click',locator:{by:'role',value:'link',name:'Sign in'}});return {finished:true,modelCalls:1,reason:'Done'};});
+ const service=createProjectSessions({privateRoot:root,model:'test',actor});
+ const first=await service.authenticate(project,secrets,'account');expect(first.modelCalls).toBe(1);
+ const second=await service.authenticate(project,secrets,'account');expect(second.continued).toBe(true);expect(actor).toHaveBeenCalledTimes(1);
+ const seen=await service.observe(project,secrets,['/']);expect(seen[0]).toMatchObject({accountId:'account',path:'/'});expect(seen[0].text).toContain('Staff home');
+ const path=service.statePath(project,'account');expect((await stat(path)).mode&0o777).toBe(0o600);expect(await readFile(path,'utf8')).toContain('login');
+},15000);
