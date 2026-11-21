@@ -85,7 +85,7 @@ function validateRunUpdate(update:ProjectRun,original:ProjectRun,discovery:Proje
   passed:results.filter(({run})=>run.verdict==='passed').length,
   failed:results.filter(({run})=>run.verdict==='failed').length,
   inconclusive:results.filter(({run})=>run.verdict==='inconclusive').length};
- return {...update,status,discovery,metrics,id:original.id,projectId:original.projectId,request:original.request,createdAt:original.createdAt};
+ return {...update,status,discovery,metrics,id:original.id,projectId:original.projectId,request:original.request,createdAt:original.createdAt,repairBlockedReason:original.repairBlockedReason};
 }
 
 function requireRepairSource(run:ProjectRun,project:Project){
@@ -192,6 +192,20 @@ export function createProjectStore(db:Database.Database){
       db.prepare('INSERT OR IGNORE INTO dev_project_history VALUES(?,?,?,?)').run(project.id,h.testerId,h.runId,JSON.stringify(h));
      }
      if(!previous)save({...requireProject(project.id),discovery:finished.discovery,updatedAt:now()});
+     if(original.request.autoRepair){
+      let blocked:string|undefined;
+      if(finished.metrics.inconclusive)blocked='Repair paused because some test results are inconclusive. Those checks need complete evidence first.';
+      else if(finished.metrics.failed){
+       if(!project.commands?.start.length)blocked='Automatic repair needs the application start command. Testing results are saved.';
+       else if(!runtime.repair)blocked='Automatic repair is not available on this runner. Testing results are saved.';
+       else {try{requireRepairSource(finished,project);}catch{blocked='Repair needs complete evidence for both a failing journey and a passing control.';}}
+       if(!blocked){
+        db.prepare("UPDATE dev_project_jobs SET status='completed' WHERE id=?").run(job.id);
+        enqueueRepair({requestId:`auto-${finished.id}`,runId:finished.id,automatic:true});
+       }
+      }
+      if(blocked)saveRun({...finished,repairBlockedReason:blocked});
+     }
     }).immediate();
    }else{
     if(!runtime.repair)throw new Error('Private repair execution is not configured');
@@ -203,7 +217,13 @@ export function createProjectStore(db:Database.Database){
      if(proposal.error)throw new Error(proposal.error);
      const patch=reviewablePatch(proposal.patch);
      if(!patch)throw new Error('Repair worker did not return a reviewable patch');
-     saveRepair({...repair,patch,sourceVersion:proposal.sourceVersion,status:'awaiting_review'});
+     db.transaction(()=>{
+      saveRepair({...repair,patch,sourceVersion:proposal.sourceVersion,status:'awaiting_review'});
+      if(repair.request.automatic){
+       db.prepare("UPDATE dev_project_jobs SET status='completed' WHERE id=?").run(job.id);
+       verifyRepair(repair.id,{requestId:`auto-${repair.id}`,patchHash:patch.hash});
+      }
+     }).immediate();
     }else{
      const patch=reviewablePatch(repair.patch);
      if(!patch||repair.verificationRequest?.patchHash!==patch.hash)throw new Error('Verification requires the exact reviewed patch');
@@ -228,9 +248,9 @@ export function createProjectStore(db:Database.Database){
     saveRepair({...r,status:'completed',finishedAt:now(),error:message,...(r.phase==='verify'?{verification:{outcome:'inconclusive',message,results:[]}}:{})});
    }
   }finally{
-   db.prepare("UPDATE dev_project_jobs SET status='completed' WHERE id=?").run(job.id);
+   db.prepare("UPDATE dev_project_jobs SET status='completed' WHERE id=? AND status='running'").run(job.id);
   }
  }
  const recoverInterrupted=db.transaction(()=>{for(const row of db.prepare("SELECT id,project_id,kind FROM dev_project_jobs WHERE status='running'").all() as {id:string;project_id:string;kind:Job['kind']}[]){if(row.kind==='discover')save({...requireProject(row.project_id),status:'failed',error:'Discovery was interrupted; refresh to retry',progress:'Discovery interrupted'});else if(row.kind==='run'){const r=getRun(row.id)!;saveRun({...r,status:'interrupted',phase:'Worker stopped',finishedAt:now()});}else{const r=getRepair(row.id)!;saveRepair({...r,status:'interrupted',finishedAt:now()});}}db.prepare("UPDATE dev_project_jobs SET status='interrupted' WHERE status='running'").run();}).immediate;
- return {connect,byRequest,get,list,refresh,enqueueRun,getRun,runs,enqueueRepair,getRepair,repairs,verifyRepair,claimNext,execute,recoverInterrupted,history,detail:(id:string):ProjectDetail=>({...requireProject(id),runs:runs(id),history:history(id)}),findEvidence:(id:string)=>{for(const p of list())for(const r of runs(p.id))for(const t of r.results)if(t.run.id===id)return t.run;for(const r of repairs())for(const t of r.verification?.results??[])if(t.run.id===id)return t.run;}};
+ return {connect,byRequest,get,list,refresh,enqueueRun,getRun,runs,enqueueRepair,getRepair,repairs,verifyRepair,claimNext,execute,recoverInterrupted,history,detail:(id:string):ProjectDetail=>({...requireProject(id),runs:runs(id),history:history(id),repairs:repairs(id)}),findEvidence:(id:string)=>{for(const p of list())for(const r of runs(p.id))for(const t of r.results)if(t.run.id===id)return t.run;for(const r of repairs())for(const t of r.verification?.results??[])if(t.run.id===id)return t.run;}};
 }

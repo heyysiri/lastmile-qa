@@ -16,11 +16,28 @@ import { StudioBack, StudioError } from './Studio';
 import { Pending } from './ui';
 
 export function ProjectRepairAction({ project, run }: { project: Project; run: ProjectRun }) {
+  if (run.request.autoRepair) return <AutomaticRepairStatus project={project} run={run} key={run.id} />;
   if (!canPrepareProjectRepair(run)) return null;
   if (!run.results.some(result => result.run.verdict === 'passed')) return <div className="project-repair-action">
     <p className="field-hint">Preparing a fix requires a passing tester journey to replay alongside the failing one.</p>
   </div>;
   return <PrepareProjectRepair project={project} run={run} key={run.id} />;
+}
+
+function AutomaticRepairStatus({ project, run }: { project: Project; run: ProjectRun }) {
+  const records = useLoad(() => api.projectRepairs(project.id), [project.id]);
+  const latest = records.data?.filter(job => job.request.runId === run.id)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  const active = Boolean(latest && isActive(latest.status));
+  useJobPolling(active, records.loading, records.reload);
+  if (run.repairBlockedReason) return <p className="note warn">{run.repairBlockedReason}</p>;
+  if (!latest) return <StudioError error={records.error} onRetry={records.reload} />;
+  const label = active ? latest.phase === 'verify' ? 'Verifying the fix' : 'Preparing a fix' : repairStatus(latest);
+  return <div className="project-repair-action" aria-live="polite">
+    {active ? <Pending label={label} /> : <strong>{label}</strong>}
+    <Link className="btn secondary" href={projectRepairHref(latest.id)}>Review fix</Link>
+    <StudioError error={latest.error || records.error} onRetry={records.error ? records.reload : undefined} />
+  </div>;
 }
 
 // Only settled, unsuccessful attempts may be retried; active, reviewable, and verified jobs stay single.
@@ -53,7 +70,7 @@ function PrepareProjectRepair({ project, run }: { project: Project; run: Project
         {!health.loading && !ready && <p className="field-hint">Enable project repairs on the runner to prepare and verify fixes.</p>}
       </> : <button type="button"
         disabled={!write.ready || records.loading || Boolean(records.error) || write.busy || (!ready && !write.pending)}
-        onClick={() => void write.submit({ requestId: newRequestId(), runId: run.id })}>
+        onClick={() => void write.submit({ requestId: newRequestId(), runId: run.id, ...(retry ? { automatic: true } : {}) })}>
         <FilePenLine size={16} aria-hidden="true" />
         {write.busy ? 'Requesting fix…' : write.pending ? 'Recover fix request' : retry ? 'Retry fix' : 'Prepare fix'}
       </button>}
@@ -111,7 +128,7 @@ export function ProjectRepairReview({ id }: { id: string }) {
       <header className="studio-heading project-page-heading">
         <h1>Review fix</h1><p>{job.project.name}</p>
       </header>
-      <div className="project-progress repair-status" data-outcome={job.verification?.outcome} role="status">
+      <div className="project-progress repair-status" data-outcome={job.verification?.outcome ?? (job.error ? 'inconclusive' : undefined)} role="status">
         {active ? <Pending label={repairStatus(job)} /> : <strong>{repairStatus(job)}</strong>}
       </div>
       <StudioError error={job.error} />
@@ -131,7 +148,7 @@ export function ProjectRepairReview({ id }: { id: string }) {
           {job.sourceVersion && <p>Source version <code>{job.sourceVersion}</code></p>}
           {patch.changes.map(change => <p key={change.path}>{change.path} <code>{change.beforeHash}</code></p>)}
         </details>
-        {job.status === 'awaiting_review' && <div className="project-actions">
+        {job.status === 'awaiting_review' && !job.request.automatic && <div className="project-actions">
           <p className="field-hint">Verification builds the patch in a private checkout and replays the original checks and passing controls.</p>
           {!job.project.commands?.start.length && <p className="field-hint">The project needs a start command for private verification.</p>}
           {!ready && !health.loading && <p className="field-hint">Enable project repairs on the runner to verify the patch.</p>}

@@ -361,7 +361,38 @@ it('fails before the provider when complete editable source exceeds the coding i
   await citeSecondLine(f, ['// ' + 'x'.repeat(181_000), code]);
   expect((await f.runtime.prepare(f.job, secrets)).error).toMatch(/exceeds the coding input limit/);
   expect(f.propose).not.toHaveBeenCalled();
+  expect(f.replay).not.toHaveBeenCalled();
   expect(await readdir(f.workspaceRoot)).toEqual([]);
+});
+
+it('keeps all frozen checks and recorded actions when repeated browser snapshots exceed the coding budget', async () => {
+  const f = await fixture();
+  for (const result of f.job.sourceRun.results) {
+    result.run.steps = Array.from({ length: 12 }, (_, index) => ({
+      index, timestamp: now, action: 'observe', observation: 'Repeated navigation and page content. '.repeat(500),
+    }));
+    result.run.evidence = {
+      buildId: 'fixture', scenarioHash: 'fixture', policyVersion: 'fixture', model: 'fixture',
+      modelCalls: 1, finishedByAgent: true,
+      actions: [{ action: { tool: 'navigate', path: '/app' }, url: 'https://original.test/app', observation: 'App' }],
+    };
+  }
+  expect(JSON.stringify(f.job.sourceRun.results).length).toBeGreaterThan(180_000);
+  const prepared = await f.runtime.prepare(f.job, secrets);
+  expect(prepared.error).toBeUndefined();
+  const input = f.propose.mock.calls[0][0] as {
+    cases: { id: string; checks: unknown[]; actions: unknown[] }[];
+    sources: { path: string; content: string }[];
+  };
+  expect(input.cases.map(item => item.id)).toEqual(['primary', 'control']);
+  expect(input.cases.map(item => item.checks)).toEqual(f.job.sourceRun.results.map(({ checks }) => checks.map(
+    ({ id, label, phase, basis, expected, actual, status, sources }) => ({ id, label, phase, basis, expected, actual, status,
+      citations: sources.map(({ path, startLine, endLine }) => ({ path, startLine, endLine })) }),
+  )));
+  expect(input.cases.map(item => item.actions)).toEqual([[{ tool: 'navigate', path: '/app' }], [{ tool: 'navigate', path: '/app' }]]);
+  expect(input.sources).toEqual([{ path: entry, content: code }]);
+  expect(JSON.stringify(input)).not.toContain('Repeated navigation');
+  expect(Buffer.byteLength(JSON.stringify(input))).toBeLessThan(180_000);
 });
 
 // The frozen journey was authored against an earlier implementation; the run's snapshot has the current one.
@@ -422,4 +453,22 @@ it.each([false,true])('does not turn an unindexed historical implementation path
   const input = f.propose.mock.calls[0][0] as { editable: string[]; sources: { path: string }[] };
   expect(input.editable).toEqual([entry]);
   expect(input.sources.map(source => source.path)).toEqual([entry]);
+});
+
+
+it.each([500,400])('retries only transient coding provider failures (HTTP %s)',async status=>{
+ const f=await fixture();const original=globalThis.fetch;let calls=0;
+ vi.stubGlobal('fetch',async(input:Parameters<typeof fetch>[0],init?:Parameters<typeof fetch>[1])=>{
+  const url=typeof input==='string'?input:input instanceof URL?input.href:input.url;
+  if(new URL(url).hostname!=='api.openai.com')return original(input,init);
+  calls++;
+  if(calls===1)return new Response(JSON.stringify({error:{message:'Temporary provider failure',type:'server_error'}}),{status,headers:{'content-type':'application/json','retry-after-ms':'1'}});
+  return new Response(JSON.stringify({choices:[{finish_reason:'stop',message:{role:'assistant',content:JSON.stringify(patch())}}]}),{status:200,headers:{'content-type':'application/json'}});
+ });
+ try{
+  const runtime=createProjectRepairRuntime({workspaceRoot:f.workspaceRoot,privateRoot:f.privateRoot,model:'fixture',apiKey:'test-provider-key',replay:f.replay});
+  const result=await runtime.prepare(f.job,secrets);
+  if(status===500){expect(result.error).toBeUndefined();expect(result.patch).toBeDefined();expect(calls).toBe(2);}
+  else{expect(result.error).toBeDefined();expect(calls).toBe(1);}
+ }finally{vi.unstubAllGlobals();}
 });

@@ -141,7 +141,7 @@ async function mockApi(page: Page, setup?: ProjectDetail) {
       if (repair && !retryable(repair)) return respond({ code: 'repair_active', message: 'This run already has a repair.' }, 409);
       if (repair) earlierRepairs.push(repair);
       const number = earlierRepairs.length + 1;
-      repair = { id: `fix-${number}`, projectId: project.id, request: input, project, sourceRun,
+      repair = { id: `fix-${number}`, projectId: project.id, request: input, project: structuredClone({ ...project, repairs: undefined }), sourceRun,
         phase: 'prepare', status: 'awaiting_review', createdAt: `2026-11-20T08:0${number}:00.000Z`, sourceVersion: hash,
         patch: { hash, summary: 'Persist the selected date.', changes: [
           { path: reference.path, beforeHash: hash, before: 'date: originalDate', after: 'date: enteredDate' },
@@ -167,17 +167,25 @@ async function mockApi(page: Page, setup?: ProjectDetail) {
   return {
     health, connects, runs, lookups, flags, refreshes, repairs, verifications,
     ready() { if (project) project = { ...project, ...makeProject(), accounts: project.accounts, commands: project.commands, runs: project.runs, history: project.history }; },
-    finish(confidence: ProjectFinding['confidence'] = 'confirmed', includeControl = false) {
+    finish(confidence: ProjectFinding['confidence'] = 'confirmed', includeControl = false, automatic = false) {
       if (!project?.runs[0]) throw new Error('A run must exist first');
       Object.assign(project.runs[0], { status: 'completed', phase: 'Complete', finishedAt: timestamp,
         findings: [{ ...finding, confidence }], results: includeControl ? [result, control] : [result],
         discovery: project.discovery, metrics: { elapsedMs: 1640, modelCalls: 4, browserActions: 9, passed: 1, failed: 1, inconclusive: 1 } });
+      project.runs[0].request.autoRepair = automatic;
+      if (automatic) {
+        repair = { id: 'fix-auto', projectId: project.id, project: structuredClone({ ...project, repairs: undefined }), sourceRun: project.runs[0],
+          request: { requestId: 'auto-run-1', runId: project.runs[0].id, automatic: true },
+          status: 'queued', phase: 'prepare', createdAt: timestamp };
+        project.repairs = [repair];
+      }
       project.history = [{ testerId: 'noa', runId: result.run.id, goal: journey.goal,
         outcome: 'failed', observations: ['Observed Monday after reload.'], createdAt: timestamp }];
     },
     setRepair(change: Partial<ProjectRepair>) {
       if (!repair) throw new Error('A repair must exist first');
       repair = { ...repair, ...change };
+      if (project) project.repairs = [...earlierRepairs, repair];
     },
     failPreparation() {
       if (!repair) throw new Error('A repair must exist first');
@@ -521,4 +529,35 @@ test('shows one recovery action after a failed discovery refresh loses its respo
   await page.goto('/projects/desk');
   await page.getByRole('button', { name: 'Refresh understanding' }).click();
   await expect(page.getByRole('button', { name: 'Recover refresh request' })).toHaveCount(1);
+});
+
+
+test('one launch follows automatic repair and verification across reload without manual requests', async ({ page }) => {
+  const mock = await mockApi(page, makeProject());
+  await page.goto('/projects/desk');
+  await page.getByRole('button', { name: 'Run test team' }).click();
+  expect(mock.runs[0].autoRepair).toBe(true);
+  mock.finish('confirmed', true, true);
+  await expect(page.getByText('Preparing a fix', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Prepare fix' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Test changes' })).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByText('Preparing a fix', { exact: true })).toBeVisible();
+  mock.setRepair({ status: 'running', phase: 'verify' });
+  await expect(page.getByText('Verifying the fix', { exact: true })).toBeVisible();
+  mock.setRepair({ status: 'completed', verification: { outcome: 'verified', message: 'All frozen checks passed.', results: [control] } });
+  await expect(page.getByText('Fix verified', { exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Review fix', exact: true })).toBeVisible();
+  expect(mock.repairs).toHaveLength(0);expect(mock.verifications).toHaveLength(0);expect(mock.runs).toHaveLength(1);
+});
+
+test('explains a blocked automatic repair instead of silently hiding the next stage', async ({ page }) => {
+  const project=makeProject();
+  project.runs=[{id:'blocked-run',projectId:project.id,request:{requestId:'blocked',mode:'explore',autoRepair:true},
+    status:'completed',phase:'Results ready',createdAt:timestamp,results:[result],findings:[finding],summary:'More evidence needed',
+    metrics:{elapsedMs:100,modelCalls:1,browserActions:1,passed:0,failed:1,inconclusive:1},
+    repairBlockedReason:'Repair paused because some test results are inconclusive. Those checks need complete evidence first.'}];
+  await mockApi(page,project);await page.goto('/projects/desk');
+  await expect(page.getByText(project.runs[0].repairBlockedReason!)).toBeVisible();
+  await expect(page.getByRole('button',{name:'Prepare fix'})).toHaveCount(0);
 });

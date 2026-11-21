@@ -307,3 +307,83 @@ it('rejects a stored repair source with evidence outside its saved discovery',as
  expect(response.statusCode).toBe(409);
  expect(response.json()).toMatchObject({code:'repair_evidence_required'});
 });
+
+
+it('automatically prepares and verifies once after a single run request, preserving the exact frozen checks',async()=>{
+ const prepare=vi.fn(async()=>({patch,sourceVersion:'a'.repeat(64)}));
+ const verify=vi.fn<NonNullable<ProjectRuntime['repair']>['verify']>(async job=>{
+  expect(job.verificationRequest?.patchHash).toBe(job.patch?.hash);
+  expect(job.sourceRun.results).toHaveLength(2);
+  return replay(job.sourceRun);
+ });
+ const {app,root}=await setup({discover:async p=>discover(p),execute:async(_p,_s,r)=>complete(r),repair:{prepare,verify}});
+ const project=await connect(app,root,{commands:{start:['test-server']},accounts:[...body(root).accounts,controlAccount]});
+ await expect.poll(async()=>(await get(app,`/api/projects/${project.id}`)).json().status).toBe('ready');
+ const request={requestId:'automatic-run',mode:'explore',autoRepair:true};
+ const response=await post(app,`/api/projects/${project.id}/runs`,request);
+ expect(response.statusCode).toBe(202);
+ const run=response.json<ProjectRun>();
+ expect((await post(app,`/api/projects/${project.id}/runs`,request)).json().id).toBe(run.id);
+ const repairs=async()=>(await get(app,`/api/project-repairs?projectId=${project.id}`)).json();
+ await expect.poll(async()=>(await repairs())[0]?.verification?.outcome).toBe('verified');
+ expect(await repairs()).toHaveLength(1);
+ expect(prepare).toHaveBeenCalledTimes(1);expect(verify).toHaveBeenCalledTimes(1);
+ expect((await repairs())[0].sourceRun.results).toEqual((await readRun(app,run.id)).results);
+ expect((await get(app,`/api/projects/${project.id}`)).json().repairs[0].verification.outcome).toBe('verified');
+});
+
+it.each(['healthy','inconclusive','no control','missing setup','missing runtime'] as const)('does not automatically repair %s and records why when blocked',async mode=>{
+ const prepare=vi.fn(async()=>({patch,sourceVersion:'a'.repeat(64)}));const verify=vi.fn();
+ const {app,root}=await setup({discover:async p=>discover(p),execute:async(_p,_s,run)=>{
+  const r=complete(run);
+  if(mode==='healthy') {r.results=replay(r).results; r.metrics.failed=0;r.metrics.passed=2;}
+  if(mode==='inconclusive')r.results[1].run.verdict='inconclusive';
+  return r;
+ },...(mode==='missing runtime'?{}:{repair:{prepare,verify}})});
+ const project=await connect(app,root,{...(mode==='missing setup'?{}:{commands:{start:['test-server']}}),accounts:mode==='no control'?body(root).accounts:[...body(root).accounts,controlAccount]});
+ await expect.poll(async()=>(await get(app,`/api/projects/${project.id}`)).json().status).toBe('ready');
+ const response=await post(app,`/api/projects/${project.id}/runs`,{requestId:'automatic-run',autoRepair:true});
+ expect(response.statusCode).toBe(202);const run=response.json<ProjectRun>();
+ await expect.poll(async()=>(await readRun(app,run.id)).status).toBe('completed');
+ const stored=await readRun(app,run.id);
+ expect(stored.error).toBeUndefined();
+ if(mode==='healthy')expect(stored.repairBlockedReason).toBeUndefined();
+ else expect(stored.repairBlockedReason).toEqual(expect.any(String));
+ expect((await get(app,`/api/project-repairs?projectId=${project.id}`)).json()).toEqual([]);
+ expect(prepare).not.toHaveBeenCalled();expect(verify).not.toHaveBeenCalled();
+});
+
+it('resumes each queued automatic stage after reopening the database without repeating preparation',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'automatic-repair-restart-'));roots.push(root);const path=join(root,'qa.sqlite');
+ let store=openRunStore(path);
+ const prepare=vi.fn(async()=>({patch,sourceVersion:'a'.repeat(64)}));
+ const verify=vi.fn<NonNullable<ProjectRuntime['repair']>['verify']>(async job=>replay(job.sourceRun));
+ const runtime:ProjectRuntime={discover:async p=>discover(p),execute:async(_p,_s,r)=>complete(r),repair:{prepare,verify}};
+ try{
+  const p=store.projects.connect(ConnectProjectSchema.parse({...body(root),commands:{start:['test-server']},accounts:[...body(root).accounts,controlAccount]}));
+  await store.projects.execute(store.projects.claimNext()!,runtime);
+  const run=store.projects.enqueueRun(p.id,{requestId:'automatic-run',mode:'explore',autoRepair:true});
+  await store.projects.execute(store.projects.claimNext()!,runtime);
+  expect(store.projects.repairs(p.id)).toHaveLength(1);
+  store.close();store=openRunStore(path);store.projects.recoverInterrupted();
+  await store.projects.execute(store.projects.claimNext()!,runtime);
+  expect(store.projects.repairs(p.id)[0]).toMatchObject({status:'queued',phase:'verify',verificationRequest:{patchHash:patch.hash}});
+  store.close();store=openRunStore(path);store.projects.recoverInterrupted();
+  await store.projects.execute(store.projects.claimNext()!,runtime);
+  expect(store.projects.repairs(p.id)[0].verification?.outcome).toBe('verified');
+  expect(store.projects.enqueueRun(p.id,{requestId:'automatic-run',mode:'explore',autoRepair:true}).id).toBe(run.id);
+  expect(store.projects.claimNext()).toBeUndefined();expect(prepare).toHaveBeenCalledTimes(1);expect(verify).toHaveBeenCalledTimes(1);
+ }finally{store.close();}
+});
+
+it('stops automatic preparation failure without looping or verifying a missing patch',async()=>{
+ const prepare=vi.fn(async()=>({error:'Source cannot fit the coding budget'}));const verify=vi.fn();
+ const {app,root}=await setup({discover:async p=>discover(p),execute:async(_p,_s,r)=>complete(r),repair:{prepare,verify}});
+ const project=await connect(app,root,{commands:{start:['test-server']},accounts:[...body(root).accounts,controlAccount]});
+ await expect.poll(async()=>(await get(app,`/api/projects/${project.id}`)).json().status).toBe('ready');
+ const response=await post(app,`/api/projects/${project.id}/runs`,{requestId:'automatic-run',autoRepair:true});expect(response.statusCode).toBe(202);
+ const read=async()=>(await get(app,`/api/project-repairs?projectId=${project.id}`)).json();
+ await expect.poll(async()=>(await read())[0]?.status).toBe('completed');
+ expect((await read())[0]).toMatchObject({error:'Source cannot fit the coding budget'});
+ expect(prepare).toHaveBeenCalledTimes(1);expect(verify).not.toHaveBeenCalled();
+});

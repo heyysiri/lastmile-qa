@@ -22,6 +22,7 @@ export function ProjectHome({ id }: { id: string }) {
   const project = detail.data;
   const runs = [...(project?.runs ?? [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const active = runs.find(run => isActive(run.status));
+  const activeRepair = project?.repairs?.find(job => isActive(job.status));
   const latest = runs.find(run => !isActive(run.status));
   const hasCompleted = runs.some(run => run.status === 'completed');
   const write = usePendingWrite(`lastmile-pending-project-run-${id}`, ProjectRunRequestSchema,
@@ -38,7 +39,7 @@ export function ProjectHome({ id }: { id: string }) {
     if (accepted && !write.busy) resolveRun();
   }, [accepted, resolveRun, write.busy]);
 
-  useJobPolling(Boolean(active || project?.status === 'discovering') && detail.error?.status !== 404, detail.loading, detail.reload);
+  useJobPolling(Boolean(active || activeRepair || project?.status === 'discovering') && detail.error?.status !== 404, detail.loading, detail.reload);
 
   const plan = project?.discovery?.plan;
   const discoveryReady = health.data?.projectDiscoveryReady === true && !health.error;
@@ -51,7 +52,7 @@ export function ProjectHome({ id }: { id: string }) {
     if (!recovering && write.pending) return null;
     return <button type="button"
       disabled={!write.ready || requestInFlight || Boolean(refresh.pending) || detail.loading || Boolean(detail.error) || (!recovering && !canRun)}
-      onClick={() => { setTab('results'); void write.submit({ requestId: newRequestId(), mode: hasCompleted ? 'release' : 'explore' }); }}>
+      onClick={() => { setTab('results'); void write.submit({ requestId: newRequestId(), mode: hasCompleted ? 'release' : 'explore', autoRepair: true }); }}>
       <Play size={16} aria-hidden="true" />
       {write.busy ? 'Starting team…' : recovering ? 'Recover run request' : hasCompleted ? 'Test changes' : 'Run test team'}
     </button>;
@@ -73,7 +74,7 @@ export function ProjectHome({ id }: { id: string }) {
     {project && <>
       <header className="studio-heading project-page-heading project-heading-with-action">
         <div><h1>{project.name}</h1><a className="project-app-link" href={project.appUrl} target="_blank" rel="noreferrer">{project.appUrl}<ArrowUpRight size={14} aria-hidden="true" /></a></div>
-        {!active && project.status === 'ready' && runButton()}
+        {!active && !activeRepair && project.status === 'ready' && runButton()}
       </header>
       {project.status === 'discovering' && <div className="project-progress"><Pending label={project.progress || 'Discovery queued'} /></div>}
       {project.status === 'failed' && <div className="project-progress">
@@ -88,7 +89,7 @@ export function ProjectHome({ id }: { id: string }) {
       </div>}
       <StudioError error={write.error} />
       <StudioError error={refresh.error} />
-      {project.status === 'ready' && !active && !write.pending && !health.loading && !canRun && <p className="note warn">
+      {project.status === 'ready' && !active && !activeRepair && !write.pending && !health.loading && !canRun && <p className="note warn">
         {executionReady ? 'Enable project discovery on the runner to test changes against refreshed source.' : 'Enable project execution on the runner to run the test team.'}
       </p>}
       <Tabs value={tab} onValueChange={setTab}>
@@ -143,7 +144,7 @@ export function ProjectHome({ id }: { id: string }) {
           </details>
         </div>
       </section>}
-      {project.status === 'ready' && !active && !refresh.pending && <div className="project-refresh">
+      {project.status === 'ready' && !active && !activeRepair && !refresh.pending && <div className="project-refresh">
         {refreshButton()}
         {!discoveryReady && !health.loading && <p className="field-hint">Enable project discovery on the runner to refresh the application understanding.</p>}
       </div>}

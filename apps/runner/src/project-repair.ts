@@ -339,7 +339,7 @@ function redact(text: string, secrets: ProjectSecrets, apiKey?: string) {
 
 async function proposeWithModel(options: Options, input: unknown, signal: AbortSignal) {
   if (!options.apiKey) throw new RepairError('A coding provider is required to propose the repair');
-  const client = new OpenAI({ apiKey: options.apiKey, timeout: 60_000, maxRetries: 0 });
+  const client = new OpenAI({ apiKey: options.apiKey, timeout: 60_000, maxRetries: 1 });
   const response = await client.chat.completions.create({
     model: options.model, response_format: { type: 'json_object' }, max_completion_tokens: 6000,
     messages: [
@@ -479,10 +479,6 @@ export function createProjectRepairRuntime(options: Options): ProjectRepairRunti
           sessionsHash: await hashSourceTree(sessions), databaseHash: database && hashBytes(database),
           runtimeFilesHash: hashBytes(runtimeJson),
         };
-        const baseline = await replayTrial(base, pending, frozen, secrets);
-        if (replayChecks(source, baseline).some(({ before, after }) => before.status !== after.status || !same(before.actual, after.actual))) {
-          throw new RepairError('Baseline replay did not reproduce the frozen failures and passing controls');
-        }
         const input = {
           requirements: project.requirements,
           cases: source.results.map(({ journey, tester, checks, run }) => ({
@@ -491,7 +487,9 @@ export function createProjectRepairRuntime(options: Options): ProjectRepairRunti
               id, label, phase, basis, expected, actual, status,
               citations: sources.map(({ path, startLine, endLine }) => ({ path, startLine, endLine })),
             })),
-            actions: run.steps.slice(-12).map(({ action, observation }) => ({ action, observation })),
+            // Checks already contain the independent outcomes. Repeated whole-page
+            // snapshots inflate the request without adding a new action or outcome.
+            actions: run.evidence?.actions.map(({ action }) => action) ?? [],
           })),
           editable: policy.editable,
           // Cited excerpts can miss the faulty code, and the proposer cannot retrieve more.
@@ -501,6 +499,10 @@ export function createProjectRepairRuntime(options: Options): ProjectRepairRunti
         };
         const packet = JSON.stringify(input, (_key, value) => typeof value === 'string' ? redact(value, secrets, options.apiKey) : value);
         if (Buffer.byteLength(packet) > 180_000) throw new RepairError('The frozen repair context exceeds the coding input limit');
+        const baseline = await replayTrial(base, pending, frozen, secrets);
+        if (replayChecks(source, baseline).some(({ before, after }) => before.status !== after.status || !same(before.actual, after.actual))) {
+          throw new RepairError('Baseline replay did not reproduce the frozen failures and passing controls');
+        }
         const proposed = await during(60_000, signal => {
           const request: unknown = JSON.parse(packet);
           return options.propose ? options.propose(request, signal) : proposeWithModel(options, request, signal);
