@@ -23,9 +23,9 @@ export function ProjectsList() {
 
   return <div className="studio project-studio">
     <header className="directory-hero">
-      <div><span className="workspace-eyebrow">A little perspective goes a long way</span>
-        <h1>Your app.<br />A fresh set of <span>eyes.</span></h1>
-        <p>Give your app a team of users. Find what breaks for them, and verify the fix.</p>
+      <div><span className="workspace-eyebrow">Persistent AI users for your app</span>
+        <h1>New release.<br />Same users.</h1>
+        <p>Your AI users return, pick up where they left off, and test what changed. Find the failure. Verify the fix.</p>
       </div>
       <div className="directory-illustration" aria-hidden="true">
         <span className="orbit-label label-one">Different people.</span>

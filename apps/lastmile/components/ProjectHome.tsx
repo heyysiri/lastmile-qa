@@ -105,7 +105,7 @@ export function ProjectHome({ id }: { id: string }) {
           : project.status === 'ready' && !active ? <div className="team-ready">
             <div className="ready-faces" aria-hidden="true">{plan?.testers.map((tester, i) => <TesterFace key={tester.id} index={i} />)}</div>
             <h2>Your team is ready</h2>
-            <p>{plan?.testers.length ?? 0} testers. {plan?.journeys.length ?? 0} journeys to explore.<br />Run your team to see your app through their eyes.</p>
+            <p>{plan?.testers.length ?? 0} testers. {plan?.journeys.length ?? 0} journeys to explore.<br />Run your team to test what happens along the way.</p>
             <ul className="project-feature-list">{plan?.features.map(feature => <li key={feature.id}>{feature.title}</li>)}</ul>
           </div> : null}
         </TabsContent>
