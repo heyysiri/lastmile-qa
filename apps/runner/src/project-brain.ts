@@ -6,7 +6,7 @@ import { Agent, BeforeModelCallEvent, ModelError, tool, type StreamOptions } fro
 import { OpenAIModel } from '@strands-agents/sdk/models/openai';
 import { z } from 'zod';
 import {
-  ProjectCheckSchema, ProjectJourneySchema, ProjectPlanSchema, ProjectTesterSchema, SourceReferenceSchema,
+  ProjectCheckSchema, ProjectJourneySchema, ProjectPlanSchema, ProjectTesterSchema,
   type DiscoverProject, type Project, type ProjectCheck,
   type ProjectDiscovery, type ProjectObservation, type ProjectPlan, type ProjectSecrets, type RepositoryIndex,
   type SourceReference,
@@ -28,7 +28,7 @@ const modelLimit = 12;
 const discoveryMs = 120_000;
 const routeLimit = 12;
 const sourceToolLimit = 20;
-const citations = (max: number) => z.array(z.union([z.string().regex(/^S[1-9]\d*$/), SourceReferenceSchema])).min(1).max(max);
+const citations = (max: number) => z.array(z.string().regex(/^S[1-9]\d*$/)).min(1).max(max);
 const submissionSchema = z.strictObject({
   ...ProjectPlanSchema.shape,
   features: z.array(z.strictObject({ ...ProjectPlanSchema.shape.features.element.shape, sources: citations(8) })).min(1).max(20),
@@ -50,9 +50,11 @@ const systemPrompt = [
   'Submit up to three distinct testers and exactly one journey per tester. Bind each tester to a distinct supplied public account ID if accounts are available. Otherwise describe independent browser personas. Retain prior tester IDs and bindings.',
   'Use small, fixed input values and user-facing goals. Keep source, success oracles and credentials out of tester descriptions and goals.',
   'Each feature and journey cites repository evidence. Every check cites the evidence for its chosen basis: requirement (including $brief or $requirements), test, or implementation. Treat implementation-only expectations as hypotheses.',
+  'Every sources array contains only returned citation IDs such as S1. Never reconstruct citation objects, hashes or excerpts. A check basis is requirement, test, or implementation, never a citation ID.',
   'Use visible, field, or text checks with exact observed role/name, label, text or source-backed test ID locators. Specify a readback route for after_reload and preserve. Use preserve for evidence of values that must remain unchanged.',
   'For a release revisit earlier checks and explain coverage of changed files. Explain gaps when a role, route, control, or expectation cannot be corroborated.',
   'Use the available turns for a small executable plan. Once each tester has one viable task and a grounded check, call submit_plan and reserve turns for corrections. Explain remaining coverage as gaps.',
+  'You have at most 12 model turns. Use the first nine for focused evidence gathering and reserve the final three for submit_plan and corrections. Prefer a small executable plan with explicit gaps over exhaustive exploration. Group up to four useful routes in one observation call.',
 ].join('\n');
 
 const digestSchema = z.array(z.strictObject({ path: z.string(), hash: z.string().regex(/^[a-f0-9]{64}$/) })).max(20_000);
@@ -259,6 +261,7 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
     };
     onProgress('Indexing repository source');
     const index = await scanRepository(project.repositoryPath);
+    if (!index.files.length) fail('No eligible repository files were found. Check the selected directory and its Git ignore rules.');
     const changes = previous ? await priorChanges(index, previous.index) : index.changedPaths;
     index.changedPaths = changes ?? [];
     if (!options.apiKey && !options.complete) fail('Repository discovery model credentials are unavailable');
@@ -321,12 +324,9 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
       onProgress('Observing the configured application entry');
       await captureObservations([startPath]);
     }
-    const mount = startUrl.pathname.endsWith('/') && startUrl.pathname !== '/' &&
-      observations.some(item => item.path === startUrl.pathname) ? startUrl.pathname : undefined;
-
     function expand(draft: z.infer<typeof submissionSchema>): PlanDraft {
-      const resolve = (values: (string | SourceReference)[]) => values.map(value => {
-        const ref = typeof value === 'string' ? references.get(value) : value;
+      const resolve = (values: string[]) => values.map(value => {
+        const ref = references.get(value);
         if (!ref) throw new Error('Citation ID was never returned by a source tool');
         return ref;
       });
@@ -357,7 +357,7 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
       validateActorContent(draft, allReferences, kinds);
       const repositoryBacked = (refs: SourceReference[]) => refs.some(ref => kinds.has(ref.path));
       if (draft.features.some(feature => !repositoryBacked(feature.sources))) {
-        throw new Error('Each feature requires a repository citation');
+        throw new Error('Each feature requires a repository citation. Cite a startupSources ID or read/search a repository file; $brief and $requirements alone do not establish an implemented feature.');
       }
       const gaps: string[] = [];
       if (!accounts.length) gaps.push('Testers are separate browser personas. No development accounts were supplied.');
@@ -418,7 +418,11 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
       override async *stream(messages: Parameters<OpenAIModel['stream']>[0], settings?: StreamOptions) {
         const cancelSignal = AbortSignal.any([signal, AbortSignal.timeout(45_000), ...(settings?.cancelSignal ? [settings.cancelSignal] : [])]);
         try {
-          yield* super.stream(messages, { ...settings, cancelSignal });
+          const toolSpecs = modelCalls >= modelLimit - 2
+            ? settings?.toolSpecs?.filter(spec => spec.name === 'submit_plan') : settings?.toolSpecs;
+          // A named forced function can return finish_reason="stop" in Chat Completions,
+          // which Strands treats as a final answer instead of executing the tool.
+          yield* super.stream(messages, { ...settings, toolSpecs, toolChoice: { any: {} }, cancelSignal });
         } catch {
           throw new ModelError('Repository discovery provider failed');
         }
@@ -467,20 +471,16 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
         },
       }),
       tool({
-        name: 'observe_app', description: 'Read visible UI for known relative routes, using the configured browser and development accounts.',
+        name: 'observe_app', description: 'Corroborate ordinary application UI routes in the guarded browser. Relative routes inferred from source or navigation are allowed; observations establish whether they actually exist.',
         inputSchema: z.strictObject({ paths: z.array(routeSchema).min(1).max(4) }),
         callback: async ({ paths }) => {
           if (signal.aborted || accepted || !options.observe) return 'Browser observation is unavailable';
-          const requested = [...new Set(paths)].filter(path => !visited.has(path) && redact(path) === path && (
-            path === startPath || path === '/' || [...evidence.values()].some(ref => !brief.has(ref.path) &&
-              (routeIn(path, ref.excerpt) || mount && path.startsWith(mount) && routeIn(path.slice(mount.length - 1), ref.excerpt))) ||
-            observations.some(item => routeIn(path, item.text))
-          )).slice(0, routeLimit - visited.size);
+          const requested = [...new Set(paths)].filter(path => !visited.has(path) && redact(path) === path).slice(0, routeLimit - visited.size);
           const cached = observations.filter(item => paths.includes(item.path));
           const results = [...cached, ...(requested.length ? await captureObservations(requested) : [])];
           if (results.length) return JSON.stringify(results);
           return requested.length ? 'Browser observation failed or the route was unavailable'
-            : 'No new routes were eligible. Use the configured entry or a path evidenced by source or browser links.';
+            : 'The requested routes were already observed or the browser route budget is exhausted. Use available evidence and submit the plan with coverage gaps.';
         },
       }),
       tool({
@@ -508,9 +508,14 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
       else onProgress(`Discovering repository features and journeys (model turn ${++modelCalls}/${modelLimit})`);
     });
 
+    const manifest = compactManifest(index, project.commands);
+    const startupSources = (await Promise.all(manifest.entryHints.slice(0, 3).map(async ({ path }) => {
+      const reference = await readSource(path, 1, 60).catch(() => undefined);
+      return reference ? remember(reference) : [];
+    }))).flat();
     const prompt = redactData({
       project: project.name, startPath, brief: project.brief, requirements: project.requirements.slice(0, 3000), accounts,
-      sourceLines: index.sourceLines, fileCount: index.files.length, manifest: compactManifest(index, project.commands),
+      sourceLines: index.sourceLines, fileCount: index.files.length, manifest, startupSources,
       startupDirectory: cwd, importedWorkspaces: workspaces, observations,
       briefSources: [...brief].flatMap(([path, text]) => text.trim() ? remember(sourceReference(path, hashValue(text), text)) : []),
       changedPaths: previous ? changes?.slice(0, 80) : undefined, changedFileCount: previous ? changes?.length : undefined,

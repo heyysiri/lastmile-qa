@@ -38,7 +38,50 @@ function completion() {
   return { choices: [{ index: 0, finish_reason: 'stop', delta: { role: 'assistant', content: 'Done' } }] };
 }
 
-type PlanChange = 'role' | 'path' | 'hash' | 'excerpt' | 'unread' | 'account' | 'reuse' | 'route' | 'selector'
+it('explains an empty source index before spending model calls', async () => {
+  const complete = vi.fn(async () => completion());
+  await expect(createRepositoryBrain({ model: 'test', complete })(project, secrets, () => {}))
+    .rejects.toThrow(/no eligible repository files.*ignore/i);
+  expect(complete).not.toHaveBeenCalled();
+});
+
+it('asks the provider to cite supplied evidence IDs instead of reconstructing source objects', async () => {
+  await writeFile(join(fixture, 'app.py'), 'def readings(): return "Readings"');
+  let sourceItems: unknown;
+  const complete = async (request: unknown) => {
+    const body = request as { tools: { function: { name: string; parameters: { properties: { plan: { properties: {
+      features: { items: { properties: { sources: { items: unknown } } } };
+    } } } } } }[] };
+    sourceItems = body.tools.find(tool => tool.function.name === 'submit_plan')!.function.parameters
+      .properties.plan.properties.features.items.properties.sources.items;
+    return completion();
+  };
+  await expect(createRepositoryBrain({ model: 'test', complete })(project, secrets, () => {})).rejects.toThrow(/submitted plan/);
+  expect(sourceItems).toMatchObject({ type: 'string', pattern: '^S[1-9]\\d*$' });
+});
+
+it('lets the guarded browser corroborate an ordinary inferred route before source route syntax is understood',async()=>{
+ await writeFile(join(fixture,'app.py'),'def inventory(): return "Stock"');
+ const observe=vi.fn(async(_p:Project,_s:ProjectSecrets,paths:string[])=>paths.map(path=>({path,accountId,text:'- heading "Stock"',observedAt:now})));
+ let turn=0;const complete=async()=>++turn===1?call(turn,'observe_app',{paths:['/workspace/inventory?view=stock']}):completion();
+ await expect(createRepositoryBrain({model:'test',observe,complete})(project,secrets,()=>{})).rejects.toThrow(/submitted plan/);
+ expect(observe.mock.calls.some(([, ,paths])=>paths.includes('/workspace/inventory?view=stock'))).toBe(true);
+});
+
+it('reserves the last three model turns for submitting and correcting the plan',async()=>{
+ await writeFile(join(fixture,'app.py'),'def readings(): return "Readings"');let turn=0;
+ const complete=async(request:unknown)=>{const body=request as {tools:{function:{name:string}}[];tool_choice?:unknown};turn++;expect(body.tool_choice).toBe('required');if(turn>=10){expect(body.tools.map(t=>t.function.name)).toEqual(['submit_plan']);expect(body.tool_choice).toBe('required');}return call(turn,'search_source',{query:'readings'});};
+ await expect(createRepositoryBrain({model:'test',complete})(project,secrets,()=>{})).rejects.toThrow(/turn limit/);
+});
+
+it('returns malformed plan errors to the model without corrupting the provider conversation',async()=>{
+ await writeFile(join(fixture,'app.py'),'def readings(): return "Readings"');let turns=0;
+ const complete=async()=>++turns===1?call(turns,'submit_plan',{plan:{summary:'Incomplete plan'}}):completion();
+ await expect(createRepositoryBrain({model:'test',complete})(project,secrets,()=>{})).rejects.toThrow(/submitted plan|schema/);
+ expect(turns).toBe(2);
+});
+
+type PlanChange = 'role' | 'path' | 'hash' | 'excerpt' | 'unread' | 'unknown-citation' | 'account' | 'reuse' | 'route' | 'selector'
   | 'basis' | 'identity' | 'multiple' | 'source-goal' | 'source-persona' | 'source-input' | 'oracle-goal' | 'oracle-input';
 
 async function setup(route: string, label: string, change?: PlanChange, entryText = '') {
@@ -85,7 +128,8 @@ async function setup(route: string, label: string, change?: PlanChange, entryTex
             ? { accountId: change === 'account' ? 'outside' : accountId } : {}) };
         const locator = change === 'role' ? { by: 'role', value: 'checkbox', name: label }
           : { by: 'label', value: change === 'selector' ? 'Unseen control' : label };
-        const cited = ['path', 'hash', 'excerpt', 'unread'].includes(change ?? '') ? evidence : source.citation;
+        const cited = ['path', 'hash', 'excerpt', 'unread'].includes(change ?? '') ? evidence
+          : change === 'unknown-citation' ? 'S9999' : source.citation;
         const check = { id: 'saved', label: 'Saved reading', kind: 'field', locator, path: route, expected: '12.9',
           phase: 'after_reload', basis: change === 'basis' ? 'test' : 'requirement', sources: [requirement.citation] };
         const journey = { id: 'record', testerId: tester.id, title: 'Log a tide',
@@ -139,6 +183,11 @@ describe('repository brain', () => {
       expect.objectContaining({ path: '/workspace/', accountId, text: expect.stringContaining('Active station') }),
     ]);
     expect(prompt.manifest.entryHints[0]).toMatchObject({ path: 'runtime/server.py' });
+    expect(prompt.startupSources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ citation: expect.stringMatching(/^S[1-9]\d*$/), reference: expect.objectContaining({
+        path: 'runtime/server.py', excerpt: 'from tides import station',
+      }) }),
+    ]));
     expect(test.observe.mock.calls.map(([, , paths]) => paths)).toEqual([['/workspace/']]);
     expect(discovery.observations).toEqual(prompt.observations);
   });
@@ -187,7 +236,7 @@ describe('repository brain', () => {
   );
 
   it.each([
-    ['path', /citation/i], ['hash', /citation/i], ['excerpt', /citation/i], ['unread', /citation/i],
+    ['unknown-citation', /citation/i],
     ['account', /account/i], ['reuse', /account/i], ['route', /route/i], ['selector', /locator/i],
     ['basis', /basis/i], ['multiple', /one journey/i], ['role', /locator/i],
     ['source-goal', /actor.*source/i], ['source-persona', /actor.*source/i], ['source-input', /actor.*source/i],
@@ -196,6 +245,12 @@ describe('repository brain', () => {
     const test = await setup('/chart-cabinet', 'High tide', change);
     await expect(test.run()).rejects.toThrow(reason);
     expect(test.submitted()).toMatch(reason);
+  });
+
+  it.each(['path', 'hash', 'excerpt', 'unread'] as const)('rejects reconstructed %s citations at the tool boundary', async change => {
+    const test = await setup('/chart-cabinet', 'High tide', change);
+    await expect(test.run()).rejects.toThrow(/without a submitted plan/);
+    expect(test.submitted()).toMatch(/expected string/i);
   });
 
   it('preserves tester identities across source changes and reports changed paths', async () => {
@@ -260,6 +315,7 @@ describe('repository brain', () => {
   });
 
   it('stops provider errors after one call and reports a sanitized failure', async () => {
+    await writeFile(join(fixture, 'app.py'), 'def readings(): return "Readings"');
     const onProgress = vi.fn();
     const complete = vi.fn(async () => { throw new Error(`Provider failed with ${password}`); });
     const discover = createRepositoryBrain({ model: 'mock-brain', complete });
@@ -270,6 +326,7 @@ describe('repository brain', () => {
   });
 
   it('stops a provider that keeps requesting source at twelve turns', async () => {
+    await writeFile(join(fixture, 'app.py'), 'def readings(): return "Readings"');
     let turn = 0;
     const complete = vi.fn(async () => call(++turn, 'search_source', { query: 'nothing' }));
     const discover = createRepositoryBrain({ model: 'mock-brain', complete });
