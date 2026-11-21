@@ -129,18 +129,18 @@ function routeIn(path: string, content: string) {
 
 const labelRoles = 'textbox|combobox|checkbox|radio|spinbutton|slider|searchbox|switch|listbox';
 
-function observedLocator(check: ProjectCheck, text: string) {
+function observedLocatorMatches(check: ProjectCheck, text: string) {
   const { by, value, name } = check.locator;
-  if (by === 'testId') return false;
+  if (by === 'testId') return 0;
   const lines = text.split('\n').filter(line => /^\s*-\s/.test(line) && !line.includes('[aria-hidden]'));
   const quoted = (label: string) => escapeRegex(JSON.stringify(label));
-  if (by === 'fieldName') return lines.filter(line => new RegExp(`^\\s*- fieldName ${quoted(value)}(?=\\s|:|$)`).test(line)).length === 1;
-  if (by === 'text') return lines.some(line => new RegExp(`(?:: |^\\s*- text: )${escapeRegex(value)}$`).test(line.trimEnd()) ||
-    new RegExp(`^\\s*- [\\w-]+ ${quoted(value)}(?=\\s|:|$)`).test(line));
+  if (by === 'fieldName') return lines.filter(line => new RegExp(`^\\s*- fieldName ${quoted(value)}(?=\\s|:|$)`).test(line)).length;
+  if (by === 'text') return lines.filter(line => new RegExp(`(?:: |^\\s*- text: )${escapeRegex(value)}$`).test(line.trimEnd()) ||
+    new RegExp(`^\\s*- [\\w-]+ ${quoted(value)}(?=\\s|:|$)`).test(line)).length;
   const role = by === 'role' ? escapeRegex(value) : labelRoles;
   const accessibleName = by === 'label' ? value : name;
   const pattern = new RegExp(`^\\s*- (?:${role})${accessibleName ? ' ' + quoted(accessibleName) : ''}(?=\\s|:|$)`);
-  return lines.filter(line => pattern.test(line)).length === 1;
+  return lines.filter(line => pattern.test(line)).length;
 }
 
 function sourcedLocator(check: ProjectCheck, excerpt: string) {
@@ -415,9 +415,10 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
           const sources = [...journey.sources, ...check.sources];
           if (check.path) route(check.path, sources);
           const pageObservations = observed(check.path ?? journey.entryPath);
-          const corroborated = pageObservations.some(item => observedLocator(check, item.text));
+          const corroborated = pageObservations.some(item => observedLocatorMatches(check, item.text) === 1);
+          const ambiguous = pageObservations.some(item => observedLocatorMatches(check, item.text) > 1);
           const missingObservedLabel = check.locator.by === 'label' && pageObservations.length > 0;
-          if (!corroborated && (missingObservedLabel || !sources.some(ref => kinds.has(ref.path) && sourcedLocator(check, ref.excerpt)))) {
+          if (ambiguous || (!corroborated && (missingObservedLabel || !sources.some(ref => kinds.has(ref.path) && sourcedLocator(check, ref.excerpt))))) {
             issues.push(`Check ${check.id}: locator ${JSON.stringify(check.locator)} on ${check.path ?? journey.entryPath} requires a source citation or matching browser observation for the assigned tester.`);
           }
           unobservedLocators ||= !corroborated;

@@ -107,7 +107,7 @@ it('returns the observed redirect destination when a requested route is read fro
 });
 
 type PlanChange = 'role' | 'path' | 'hash' | 'excerpt' | 'unread' | 'unknown-citation' | 'account' | 'reuse' | 'route' | 'selector' | 'route-selector' | 'auto-observe'
-  | 'field-name' | 'field-name-duplicate' | 'field-name-unobserved' | 'unlinked-label' | 'missing-expected'
+  | 'field-name' | 'field-name-duplicate' | 'field-name-unobserved' | 'unlinked-label' | 'missing-expected' | 'ambiguous-text'
   | 'basis' | 'identity' | 'multiple' | 'source-goal' | 'source-persona' | 'source-input' | 'oracle-goal' | 'oracle-input';
 
 async function setup(route: string, label: string, change?: PlanChange, entryText = '') {
@@ -118,7 +118,7 @@ async function setup(route: string, label: string, change?: PlanChange, entryTex
     path, ...(project.accounts.length ? { accountId } : {}),
     text: (change?.startsWith('field-name') ? '  - generic: navigation filler\n'.repeat(240)
       + (change === 'field-name-unobserved' ? '' : '- fieldName "readings.current"\n'.repeat(change === 'field-name-duplicate' ? 2 : 1)) : '')
-      + (change === 'unlinked-label' ? `- fieldName "readings.current" nearbyLabel "${label}"\n` : `- textbox "${label}"\n`)
+      + (change === 'ambiguous-text' ? `- heading "${label}"\n- link "${label}"\n` : change === 'unlinked-label' ? `- fieldName "readings.current" nearbyLabel "${label}"\n` : `- textbox "${label}"\n`)
       + `${username} ${password}${path === new URL(project.appUrl).pathname ? entryText : ''}`,
     observedAt: now,
   })));
@@ -157,6 +157,7 @@ async function setup(route: string, label: string, change?: PlanChange, entryTex
           role: 'Keeper', summary: change === 'source-persona' ? `Follow ${source.reference.path}.` : 'Records observations.', ...(project.accounts.length
             ? { accountId: change === 'account' ? 'outside' : accountId } : {}) };
         const locator = change?.startsWith('field-name') ? { by: 'fieldName', value: 'readings.current' }
+          : change === 'ambiguous-text' ? { by: 'text', value: label }
           : change === 'role' ? { by: 'role', value: 'checkbox', name: label }
           : { by: 'label', value: ['selector', 'route-selector'].includes(change ?? '') ? 'Unseen control' : label };
         const cited = ['path', 'hash', 'excerpt', 'unread'].includes(change ?? '') ? evidence
@@ -356,6 +357,7 @@ describe('repository brain', () => {
     ['account', /account/i], ['reuse', /account/i], ['route', /record.*route.*\/invented/i], ['selector', /saved.*locator.*Unseen control/i],
     ['route-selector', /record.*route.*\/invented[\s\S]*saved.*locator.*Unseen control/i],
     ['missing-expected', /journeys\.0\.checks\.0.*expected value/i],
+    ['ambiguous-text', /locator/i],
     ['basis', /basis/i], ['multiple', /one journey/i], ['role', /locator/i],
     ['source-goal', /actor.*source/i], ['source-persona', /actor.*source/i], ['source-input', /actor.*source/i],
     ['oracle-goal', /actor.*oracle/i], ['oracle-input', /actor.*oracle/i],
