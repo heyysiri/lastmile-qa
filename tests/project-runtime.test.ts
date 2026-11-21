@@ -8,20 +8,29 @@ import {scanRepository,readRepositorySource} from '../apps/runner/src/repository
 import type {Project,ProjectDiscovery,ProjectRun} from '../packages/contracts/src/projects';
 const roots:string[]=[],servers:Server[]=[];
 afterEach(async()=>{await Promise.all(servers.splice(0).map(s=>new Promise<void>(r=>s.close(()=>r()))));await Promise.all(roots.splice(0).map(r=>rm(r,{recursive:true,force:true})));});
-async function fixture(options:{shared?:boolean;privateValue?:string}={}){const root=await mkdtemp(join(tmpdir(),'project-runtime-'));roots.push(root);await writeFile(join(root,'requirements.md'),'Staff can rename a record. Renaming must preserve its existing quantity.');
- const values:Record<string,{name:string;stock:number}>={a:{name:'A',stock:17},b:{name:'B',stock:23}};let defect=true,redirect=false,delayFirstAlternateRead=options.shared;
+async function fixture(options:{shared?:boolean;privateValue?:string;authentication?:boolean}={}){const root=await mkdtemp(join(tmpdir(),'project-runtime-'));roots.push(root);await writeFile(join(root,'requirements.md'),'Staff can rename a record. Renaming must preserve its existing quantity.');
+ const values:Record<string,{name:string;stock:number}>={a:{name:'A',stock:17},b:{name:'B',stock:23}};let defect=true,redirect=false,delayFirstAlternateRead=options.shared,loginBusy=false,loginCollisions=0;
  const server=createServer(async(q,r)=>{
+  if(options.authentication){
+   r.setHeader('content-type','text/html');
+   if(q.url==='/signin'){
+    if(loginBusy){loginCollisions++;r.writeHead(503).end('<h1>Database is locked</h1>');return;}
+    loginBusy=true;await new Promise(resolve=>setTimeout(resolve,500));r.setHeader('set-cookie','signed=yes; Path=/');loginBusy=false;
+    r.end('<button>Sign out</button>');return;
+   }
+   if(!q.headers.cookie?.includes('signed=yes')){r.end('<a href="/signin">Sign in</a>');return;}
+  }
   const alternate=q.url?.includes('/b');const key=alternate&&!options.shared?'b':'a';
   if(redirect&&q.method==='GET'&&q.url==='/edit/a?id=42'){r.writeHead(302,{location:'/edit/a?id=43#details'}).end();return;}
   if(q.method==='POST'){let body='';for await(const chunk of q)body+=chunk;values[key].name=new URLSearchParams(body).get('name')!;if(defect&&key==='a')values[key].stock=1;r.writeHead(303,{location:'/edit/'+(alternate?'b':'a')});r.end();return;}
   if(delayFirstAlternateRead&&alternate){delayFirstAlternateRead=false;await new Promise(resolve=>setTimeout(resolve,2200));}
-  r.setHeader('content-type','text/html');r.end(`<main><form method="post"><label>Name<input name="name" value="${values[key].name}"></label><label>Stock<input value="${options.privateValue??values[key].stock}" readonly></label><button>Save</button></form></main>`);
+  r.setHeader('content-type','text/html');r.end(`${options.authentication?'<button>Sign out</button>':''}<main><form method="post"><label>Name<input name="name" value="${values[key].name}"></label><label>Stock<input value="${options.privateValue??values[key].stock}" readonly></label><button>Save</button></form></main>`);
  });servers.push(server);await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const origin=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
  const index=await scanRepository(root),source=await readRepositorySource(index,'requirements.md');const testers=['a','b'].map(id=>({id,name:id,role:'Staff',summary:'Maintain assigned records',context:{...projectBrowserContext,id}}));
  const discovery:ProjectDiscovery={index:{...index,fileCount:index.files.length},plan:{summary:'Records',features:[{id:'records',title:'Records',description:'Edit records',sources:[source]}],roles:['Staff'],testers,journeys:testers.map(t=>({id:t.id,testerId:t.id,title:'Rename record',goal:'Rename your record using newName, then save.',entryPath:'/edit/'+t.id,inputs:{newName:'Updated '+t.id},checks:[{id:'name',label:'Saved name',kind:'field',locator:{by:'label',value:'Name'},expected:'Updated '+t.id,phase:'after_reload',path:'/edit/'+t.id,basis:'requirement',sources:[source]},{id:'stock',label:'Existing stock remains intact',kind:'field',locator:{by:'label',value:'Stock'},phase:'preserve',path:'/edit/'+t.id,basis:'requirement',sources:[source]}],sources:[source],reason:'Renaming must preserve stock'})),gaps:[]},observations:[],modelCalls:0,durationMs:0,generatedAt:new Date().toISOString()};
  const project:Project={id:'project',name:'Records',repositoryPath:root,appUrl:origin,allowedOrigins:[],brief:'Staff can rename records',requirements:'',accounts:[],createdAt:'now',updatedAt:'now',status:'ready',progress:'Ready',discovery};
  const run:ProjectRun={id:'run-one',projectId:project.id,request:{requestId:'first',mode:'explore'},status:'running',phase:'Starting',createdAt:new Date().toISOString(),results:[],findings:[],summary:'',metrics:{elapsedMs:0,modelCalls:0,browserActions:0,passed:0,failed:0,inconclusive:0}};
- return {root,values,project,run,discovery,setDefect:(v:boolean)=>{defect=v;},redirectRecord:()=>{redirect=true;}};
+ return {root,values,project,run,discovery,loginCollisions:()=>loginCollisions,setDefect:(v:boolean)=>{defect=v;},redirectRecord:()=>{redirect=true;}};
 }
 
 const saveName:typeof import('../apps/runner/src/agent').runAgent=async session=>{
@@ -162,4 +171,21 @@ it('treats an uncorroborated missing generated selector as suspected, not a conf
 it('downgrades the whole comparison if source changes while testers act',async()=>{
  const f=await fixture();const runtime=createProjectRuntime({privateRoot:join(f.root,'.private'),artifactRoot:join(f.root,'.artifacts'),model:'test',discover:async()=>f.discovery,actor:async()=>{await writeFile(join(f.root,'requirements.md'),'The application changed during the run.');return {finished:true,modelCalls:1,reason:'Done'};}});
  const result=await runtime.execute(f.project,{accounts:[]},f.run,[],()=>{});expect(result.error).toMatch(/changed during/);expect(result.results.every(r=>r.run.verdict==='inconclusive')).toBe(true);
+},20000);
+
+
+it('authenticates execution accounts without concurrent writes before freezing all preconditions',async()=>{
+ const f=await fixture({authentication:true});
+ const accounts=['a','b'].map(id=>({id,label:`Staff ${id}`,username:`user-${id}`,password:`password-${id}`}));
+ f.project.accounts=accounts.map(({id,label})=>({id,label}));
+ for(const tester of f.discovery.plan.testers)tester.accountId=tester.id;
+ const runtime=createProjectRuntime({privateRoot:join(f.root,'.private'),artifactRoot:join(f.root,'.artifacts'),model:'test',actor:async(session,run,options)=>{
+  if(run.inputs.newName)return saveName(session,run,options);
+  await session.execute({tool:'click',locator:{by:'role',value:'link',name:'Sign in'}});
+  return {finished:true,modelCalls:1,reason:'Done'};
+ }});
+ const result=await runtime.execute(f.project,{accounts},f.run,[],()=>{});
+ expect(f.loginCollisions()).toBe(0);
+ expect(result.results.map(r=>r.run.verdict)).toEqual(['failed','passed']);
+ expect(result.results.map(r=>r.checks[1].expected)).toEqual(['17','23']);
 },20000);

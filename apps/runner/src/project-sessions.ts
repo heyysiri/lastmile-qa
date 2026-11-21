@@ -68,10 +68,11 @@ export function createProjectSessions(options:Options){
  }
  async function observe(project:Project,secrets:ProjectSecrets,paths:string[]):Promise<ProjectObservation[]>{
   const identities=project.accounts.length?project.accounts.map(a=>a.id):['guest'];
-  return (await Promise.all(identities.map(async identity=>{
+  const results:ProjectObservation[]=[];
+  // Development apps may share a single-writer database across all accounts.
+  for(const identity of identities){
    const directory=join(options.privateRoot,'observations',randomUUID());let session:BrowserSession|undefined;
-   try{const auth=await authenticate(project,secrets,identity);if(!auth.verified)return [];session=await createBrowserSession({pack:projectBrowserContext,inputs:{},origin:project.appUrl,allowedOrigins:project.allowedOrigins,storageState:auth.state,redactValues:privateValues(secrets),artifactDirectory:directory,signal:AbortSignal.timeout(60000),onStep:()=>{}});
-    const results:ProjectObservation[]=[];
+   try{const auth=await authenticate(project,secrets,identity);if(!auth.verified)continue;session=await createBrowserSession({pack:projectBrowserContext,inputs:{},origin:project.appUrl,allowedOrigins:project.allowedOrigins,storageState:auth.state,redactValues:privateValues(secrets),artifactDirectory:directory,signal:AbortSignal.timeout(60000),onStep:()=>{}});
     for(const path of paths.slice(0,12)){
      try{
       await session.execute({tool:'navigate',path});
@@ -81,9 +82,9 @@ export function createProjectSessions(options:Options){
       results.push({path:routeIdentity(session.page.url()),requestedPath:path,accountId:identity==='guest'?undefined:identity,text,observedAt:new Date().toISOString()});
      }catch{/* Unavailable routes remain explicit coverage gaps in discovery. */}
     }
-    return results;
-   }catch{return [];}finally{await session?.close().catch(()=>{});await rm(directory,{recursive:true,force:true});}
-  }))).flat();
+   }catch{/* This account stays an explicit coverage gap. */}finally{await session?.close().catch(()=>{});await rm(directory,{recursive:true,force:true});}
+  }
+  return results;
  }
  return {statePath,load,save,authenticate,observe,privateValues};
 }

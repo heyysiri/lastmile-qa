@@ -179,21 +179,23 @@ export function createProjectRuntime(options:Options):ProjectRuntime&{replay:(pr
   run.discovery=discovery;run.sourceVersion=discovery.index.version;
   run.phase='Freezing journey preconditions';onUpdate(structuredClone(run));
   const testers=new Map(discovery.plan.testers.map(t=>[t.id,t]));
-  const authenticated=new Map(await Promise.all(discovery.plan.testers.map(async tester=>{
+  const authenticated=new Map<string,boolean>();
+  for(const tester of discovery.plan.testers){
    const auth=await sessions.authenticate(project,secrets,tester.accountId??tester.id);run.metrics.modelCalls+=auth.modelCalls;
-   return [tester.id,auth.verified] as const;
-  })));
+   authenticated.set(tester.id,auth.verified);
+  }
   await snapshot(project,run,index);
   const priorIds=new Set(prior.map(r=>r.journey.id));
-  const prepared=await Promise.all(discovery.plan.journeys.map(journey=>{
+  const prepared:PreparedJourney[]=[];
+  for(const journey of discovery.plan.journeys){
    const tester=testers.get(journey.testerId)!;
    const unavailable=new Map<string,string>();
    if(priorIds.has(journey.id))for(const check of journey.checks){
     if(!currentCheck(check))unavailable.set(check.id,'A prior check source citation is stale or missing');
     else if(check.phase==='preserve'&&check.expected===undefined)unavailable.set(check.id,'The prior run did not freeze a preserved value');
    }
-   return prepareJourney(project,tester,journey,unavailable,authenticated.get(tester.id)===true,privateValues);
-  }));
+   prepared.push(await prepareJourney(project,tester,journey,unavailable,authenticated.get(tester.id)===true,privateValues));
+  }
   run.phase='Your testers are exploring';onUpdate(structuredClone(run));
   // Different entry paths can share backend state. Replay starts from the
   // same pre-action snapshot and uses this same serial journey order.

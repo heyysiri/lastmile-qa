@@ -99,3 +99,22 @@ it('observes collapsed navigation links without opening content or form controls
  expect(seen.text).toContain('link "Stock records"');
  expect(seen.text).not.toMatch(/Content expanded|Form expanded/);
 },15000);
+
+it('observes both accounts without overlapping login writes on a single-writer development app',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'project-serial-logins-'));roots.push(root);let busy=false,collisions=0;
+ const server=createServer(async(q,r)=>{
+  r.setHeader('content-type','text/html');
+  if(q.url==='/signin'){
+   if(busy){collisions++;r.writeHead(503).end('<h1>Database is locked</h1>');return;}
+   busy=true;await new Promise(resolve=>setTimeout(resolve,500));r.setHeader('set-cookie','signed=yes; Path=/');busy=false;
+   r.end('<button>Sign out</button>');return;
+  }
+  r.end(q.headers.cookie?.includes('signed=yes')?'<button>Sign out</button><h1>Profile</h1>':'<a href="/signin">Sign in</a>');
+ });servers.push(server);await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
+ const origin=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
+ const accounts=['a','b'].map(id=>({id,label:`Shopper ${id}`,username:`user-${id}`,password:`password-${id}`}));
+ const project:Project={id:'serial',name:'Shop',repositoryPath:root,brief:'Review profiles',requirements:'',createdAt:'now',updatedAt:'now',status:'ready',progress:'Ready',appUrl:origin,allowedOrigins:[],accounts:accounts.map(({id,label})=>({id,label}))};
+ const service=createProjectSessions({privateRoot:root,model:'test',actor:async session=>{await session.execute({tool:'click',locator:{by:'role',value:'link',name:'Sign in'}});return {finished:true,modelCalls:1,reason:'Done'};}});
+ const observations=await service.observe(project,{accounts},['/']);
+ expect(collisions).toBe(0);expect(observations.map(o=>o.accountId)).toEqual(['a','b']);
+},20000);
