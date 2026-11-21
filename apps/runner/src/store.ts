@@ -3,7 +3,8 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import Database from 'better-sqlite3';
 import { ZodError } from 'zod';
-import { compileInputs, type RunRecord, type RunRequest } from '@lastmile/contracts';
+import type { EvidenceRun, InvestigationRecord, InvestigationRequest, ReplayPlan } from '@lastmile/contracts/runtime';
+import { compileInputs, type RunRecord, type RunRequest, type ContextPack } from '@lastmile/contracts';
 import { desktopContext, inventoryScenario, mobileContext, storeScenario } from '@lastmile/contracts/examples';
 
 export class RunnerError extends Error {
@@ -83,6 +84,7 @@ export function openRunStore(path: string) {
       data TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS runs_status ON runs(status);
+    CREATE TABLE IF NOT EXISTS investigations (id TEXT PRIMARY KEY, request_id TEXT UNIQUE NOT NULL, data TEXT NOT NULL);
   `);
   const scenarios = revisions<typeof storeScenario>(db, 'scenario');
   const contextPacks = revisions<typeof desktopContext>(db, 'context');
@@ -115,7 +117,11 @@ export function openRunStore(path: string) {
     }
   }).immediate();
 
+  const findInvestigation=db.prepare<[string],JsonRow>('SELECT data FROM investigations WHERE id = ?');
+  const listInvestigations=()=>db.prepare<[],JsonRow>('SELECT data FROM investigations ORDER BY rowid DESC').all().map(decode<InvestigationRecord>);
+  const saveInvestigation=(record:InvestigationRecord)=>{db.prepare('UPDATE investigations SET data = ? WHERE id = ?').run(JSON.stringify(record),record.id);return record;};
   const recoverInterrupted = db.transaction(() => {
+    for(const record of listInvestigations()) if(record.status==='running') saveInvestigation({...record,status:'interrupted',error:'Runner restarted during investigation'});
     for (const row of findRunning.all()) {
       const run = decode<RunRecord>(row);
       save({
@@ -129,11 +135,25 @@ export function openRunStore(path: string) {
 
   return {
     recoverInterrupted,
+    getInvestigation:(id:string)=>{const row=findInvestigation.get(id);return row?decode<InvestigationRecord>(row):undefined;},
+    listInvestigations,
+    enqueueInvestigation:db.transaction((request:InvestigationRequest)=>{
+      const previous=db.prepare<[string],JsonRow>('SELECT data FROM investigations WHERE request_id = ?').get(request.requestId);
+      if(previous){const record=decode<InvestigationRecord>(previous);if(canonicalJson(record.request)!==canonicalJson(request)) throw new RunnerError(409,'request_conflict','Request ID already has a different payload');return record;}
+      const record:InvestigationRecord={id:randomUUID(),request,status:'queued',createdAt:new Date().toISOString()};
+      db.prepare('INSERT INTO investigations (id,request_id,data) VALUES (?,?,?)').run(record.id,request.requestId,JSON.stringify(record));return record;
+    }).immediate,
+    claimInvestigation:db.transaction(()=>{const records=listInvestigations();if(records.some(r=>r.status==='running'))return;const record=records.reverse().find(r=>r.status==='queued');return record?saveInvestigation({...record,status:'running'}):undefined;}).immediate,
+    updateInvestigation:(record:InvestigationRecord)=>{
+      const row=findInvestigation.get(record.id);if(!row||decode<InvestigationRecord>(row).status!=='running')throw new RunnerError(409,'invalid_status','Investigation is not running');
+      return saveInvestigation(record);
+    },
+    insertTrial:(run:EvidenceRun)=>{insertRun.run(run.id,run.requestId,canonicalJson({trial:run.id}),run.status,JSON.stringify(run));return run;},
     scenarios,
     contextPacks,
     getRun,
     listRuns: () => runHistory.all().map(decode<RunRecord>),
-    enqueue: db.transaction((request: RunRequest, sellerDemoUrl: string, executionMode: RunRecord['executionMode'] = 'deterministic') => {
+    enqueue: db.transaction((request: RunRequest, sellerDemoUrl: string, executionMode: RunRecord['executionMode'] = 'deterministic', expectedBuildId?:string) => {
       const requestJson = canonicalJson(request);
       const previous = findRequest.get(request.requestId);
       if (previous) {
@@ -151,9 +171,10 @@ export function openRunStore(path: string) {
         throw new RunnerError(400, 'invalid_inputs', 'Context inputs do not satisfy the scenario');
       }
 
-      const manifest = { scenario, context, inputs, executionMode, sellerDemoUrl };
-      const run: RunRecord = {
-        id: randomUUID(), requestId: request.requestId, scenario, context, inputs, executionMode,
+      if(Object.values(inputs).some(value=>typeof value==='object')) throw new RunnerError(400,'unsupported_fixture','File fixtures are not registered for this project');
+      const manifest = { scenario, context, inputs, executionMode, sellerDemoUrl, expectedBuildId };
+      const run: EvidenceRun = {
+        id: randomUUID(), requestId: request.requestId, scenario, context, inputs, executionMode, expectedBuildId,
         manifestHash: createHash('sha256').update(canonicalJson(manifest)).digest('hex'),
         status: 'queued', verdict: null, createdAt: new Date().toISOString(),
         steps: [], assertions: [], findings: [], capabilities: [], artifacts: [],
@@ -161,12 +182,21 @@ export function openRunStore(path: string) {
       insertRun.run(run.id, request.requestId, requestJson, run.status, JSON.stringify(run));
       return run;
     }).immediate,
+    enqueueReplay:db.transaction((requestId:string,source:EvidenceRun,context:ContextPack,replay:ReplayPlan)=>{
+      const requestJson=canonicalJson({requestId,sourceId:source.id,contextId:context.id,contextRevision:context.revision,replayHash:replay.hash});
+      const previous=findRequest.get(requestId);
+      if(previous){if(previous.request_json!==requestJson)throw new RunnerError(409,'request_conflict','Request ID already has a different payload');return decode<EvidenceRun>(previous);}
+      const inputs=compileInputs(source.scenario,context);
+      if(Object.values(inputs).some(v=>typeof v==='object'))throw new RunnerError(400,'unsupported_fixture','File fixtures are not registered');
+      const run:EvidenceRun={...structuredClone(source),id:randomUUID(),requestId,context:structuredClone(context),inputs,expectedBuildId:replay.buildId,replay:structuredClone(replay),evidence:undefined,artifactManifestHash:undefined,status:'queued',verdict:null,createdAt:new Date().toISOString(),startedAt:undefined,finishedAt:undefined,namespaceId:undefined,executionMode:'deterministic',steps:[],assertions:[],findings:[],capabilities:[],artifacts:[],manifestHash:createHash('sha256').update(canonicalJson({scenario:source.scenario,context,replay})).digest('hex')};
+      insertRun.run(run.id,requestId,requestJson,run.status,JSON.stringify(run));return run;
+    }).immediate,
     claimNext: db.transaction(() => {
       if (findRunning.get()) return undefined;
       const row = nextQueued.get();
       return row && save({ ...decode<RunRecord>(row), status: 'running', startedAt: new Date().toISOString() });
     }).immediate,
-    updateRun: db.transaction((update: RunRecord) => {
+    updateRun: db.transaction((update: EvidenceRun) => {
       const run = getRun(update.id);
       if (!run) throw new RunnerError(404, 'not_found', 'Run does not exist');
       if (run.status !== 'running' || (update.status !== 'running' && update.status !== 'completed')) {
@@ -178,6 +208,7 @@ export function openRunStore(path: string) {
         finishedAt: completed ? new Date().toISOString() : undefined,
         namespaceId: update.namespaceId, steps: update.steps, assertions: update.assertions,
         findings: update.findings, capabilities: update.capabilities, artifacts: update.artifacts,
+        ...({evidence:update.evidence,artifactManifestHash:update.artifactManifestHash}),
       });
     }).immediate,
     close: () => db.close(),

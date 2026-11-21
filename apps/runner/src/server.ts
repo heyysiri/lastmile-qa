@@ -1,8 +1,13 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual, randomUUID } from 'node:crypto';
 import { realpath, stat } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import Fastify from 'fastify';
 import type { ZodType } from 'zod';
+import { InvestigationRequestSchema, ReplayRequestSchema, type EvidenceRun, type ReplayPlan } from '@lastmile/contracts/runtime';
+import { compileInputs } from '@lastmile/contracts';
+import { readArtifact, hashValue } from './artifacts';
+import { buildReplay } from './replay';
+import { investigate } from '../../../packages/differential/src/index';
 import {
   capabilities, ContextPackSchema, RunRequestSchema, ScenarioSchema, type RunRecord,
 } from '@lastmile/contracts';
@@ -16,6 +21,8 @@ export type ServerOptions = {
   sellerDemoUrl?: string;
   modelConfigured?: boolean;
   executeRun?: ExecuteRun;
+  getBuildId?:()=>Promise<string>;
+  executeReplay?: (run:EvidenceRun,onUpdate:(run:RunRecord)=>void,replay:ReplayPlan)=>Promise<EvidenceRun>;
 };
 
 const allowedOrigins = new Set(['http://127.0.0.1:3000', 'http://localhost:3000']);
@@ -86,10 +93,36 @@ export function createServer(options: ServerOptions) {
     try {
       while (!stopping) {
         const run = store.claimNext();
-        if (!run) break;
+        if (!run) {
+          const job=store.claimInvestigation();
+          if(!job) break;
+          try {
+            const target=requireRun(job.request.targetRunId) as EvidenceRun,control=requireRun(job.request.controlRunId) as EvidenceRun;
+            if(!options.executeReplay)throw new Error('Replay execution is unavailable');
+            const replay=buildReplay(control);
+            const result=await investigate({id:job.id,target,control,replay,factors:job.request.factors,maxAttempts:job.request.maxAttempts,
+              onUpdate:result=>store.updateInvestigation({...job,result}),
+              runTrial:async(context,plan)=>{
+                const id=randomUUID();
+                const trial:EvidenceRun={...structuredClone(target),id,requestId:`trial-${id}`,context,inputs:compileInputs(target.scenario,context),status:'running',verdict:null,createdAt:new Date().toISOString(),startedAt:new Date().toISOString(),finishedAt:undefined,namespaceId:undefined,evidence:undefined,executionMode:'deterministic',steps:[],assertions:[],findings:[],capabilities:[],artifacts:[],expectedBuildId:plan.buildId,manifestHash:hashValue({scenario:target.scenario,context,replay:plan.hash})};
+                store.insertTrial(trial);
+                try {
+                  const result=await options.executeReplay!(trial,update=>store.updateRun(update),plan);
+                  store.updateRun(result);return result;
+                } catch {
+                  const result:EvidenceRun={...trial,status:'completed',verdict:'inconclusive',findings:[{kind:'environment_failure',description:'Replay executor could not complete the trial',evidencePaths:[]}]};
+                  store.updateRun(result);return result;
+                }
+              }});
+            store.updateInvestigation({...job,status:'completed',result});
+          }catch{store.updateInvestigation({...job,status:'completed',error:'Investigation could not establish a valid matched comparison. Check completed target/control evidence, matching scenario/build and configured factors.'});}
+          continue;
+        }
         let updating = true;
         try {
-          const result = await execute(run, (update) => {
+          const replay=(run as EvidenceRun).replay;
+          const perform=replay&&options.executeReplay ? (r:RunRecord,u:(r:RunRecord)=>void)=>options.executeReplay!(r,u,replay) : execute;
+          const result = await perform(run, (update) => {
             if (updating && update.status === 'running') store.updateRun({ ...update, id: run.id });
           });
           if (result.status !== 'completed') throw new Error('Executor returned an unfinished run');
@@ -193,6 +226,7 @@ export function createServer(options: ServerOptions) {
     const run = store.enqueue(
       parse(RunRequestSchema, request.body), sellerDemoUrl.href,
       modelConfigured && execute !== executeRun ? 'ai_guided' : 'deterministic',
+      await options.getBuildId?.(),
     );
     startWorker();
     return reply.code(202).send({ id: run.id, status: run.status });
@@ -204,5 +238,39 @@ export function createServer(options: ServerOptions) {
     return items;
   });
 
+  app.get<{Params:{id:string;name:string}}>('/api/runs/:id/artifacts/:name',async(request,reply)=>{
+    const run=requireRun(request.params.id);
+    const artifact=`${run.id}/${request.params.name}`;
+    if(!(await existingArtifacts(artifactRoot,run)).includes(artifact)) throw new RunnerError(404,'not_found','Artifact does not exist');
+    try {
+      const digest=(run as EvidenceRun).artifactManifestHash;
+      if(!digest)throw new Error('No trusted artifact manifest');
+      const bytes=await readArtifact(resolve(artifactRoot,run.id),request.params.name,digest);
+      const type=request.params.name.endsWith('.png')?'image/png':request.params.name.endsWith('.zip')?'application/zip':'application/json';
+      return reply.type(type).header('x-content-type-options','nosniff').send(bytes);
+    } catch {throw new RunnerError(409,'artifact_integrity','Artifact integrity check failed');}
+  });
+  app.post<{Params:{id:string}}>('/api/runs/:id/replay',async(request,reply)=>{
+    if(!options.executeReplay)throw new RunnerError(503,'execution_unavailable','Replay execution is unavailable');
+    const input=parse(ReplayRequestSchema,request.body);
+    const source=requireRun(request.params.id) as EvidenceRun;
+    const context=store.contextPacks.get(input.contextPackId,input.contextRevision);
+    if(!context)throw new RunnerError(404,'not_found','Context revision does not exist');
+    let replay:ReplayPlan;
+    try{replay=buildReplay(source);}catch{throw new RunnerError(400,'invalid_replay','Choose an AI-guided run with all outcome checks passed');}
+    const run=store.enqueueReplay(input.requestId,source,context,replay);startWorker();return reply.code(202).send({id:run.id,status:run.status});
+  });
+  app.get('/api/investigations',async()=>store.listInvestigations());
+  app.get<{Params:{id:string}}>('/api/investigations/:id',async request=>{
+    const job=store.getInvestigation(request.params.id);if(!job)throw new RunnerError(404,'not_found','Investigation does not exist');return job;
+  });
+  app.post('/api/investigations',async(request,reply)=>{
+    if(!options.executeReplay)throw new RunnerError(503,'execution_unavailable','Replay execution is unavailable');
+    const input=parse(InvestigationRequestSchema,request.body);
+    const target=requireRun(input.targetRunId) as EvidenceRun,control=requireRun(input.controlRunId) as EvidenceRun;
+    if(target.status!=='completed'||target.verdict!=='failed'||control.status!=='completed'||control.verdict!=='passed'||!target.evidence||!control.evidence||target.evidence.scenarioHash!==control.evidence.scenarioHash||target.evidence.buildId!==control.evidence.buildId) throw new RunnerError(400,'invalid_comparison','Choose a failed target and passed control with the same scenario and build');
+    if(input.factors.some(f=>!target.scenario.investigation.factors.includes(f))||input.maxAttempts>target.scenario.investigation.maxAttempts)throw new RunnerError(400,'invalid_factors','Investigation exceeds the scenario factor or attempt limits');
+    const job=store.enqueueInvestigation(input);startWorker();return reply.code(202).send(job);
+  });
   return app;
 }

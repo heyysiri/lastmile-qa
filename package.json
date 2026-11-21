@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "test:e2e": "playwright test",
     "build": "pnpm -r --if-present build",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "demo:seed": "tsx scripts/seed-demo.ts",
+    "demo:investigate": "tsx scripts/demo-investigate.ts"
   },
   "dependencies": {
     "@strands-agents/sdk": "1.26.0",

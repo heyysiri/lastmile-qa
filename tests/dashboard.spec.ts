@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './runner-ui.fixture';
 import { randomUUID } from 'node:crypto';
 
 test('author a new task and context, reload, then inspect an honest run outcome', async ({ page }) => {

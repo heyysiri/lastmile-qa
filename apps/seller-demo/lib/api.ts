@@ -30,7 +30,7 @@ const same = (a: string, b: string) => {
   return left.length === right.length && timingSafeEqual(left, right);
 };
 
-export function createApi({ store, env }: { store: SellerStore; env: Env }) {
+export function createApi({ store, env, getBuildId }: { store: SellerStore; env: Env; getBuildId?: () => Promise<string> }) {
   const testEnabled = () => env.ENABLE_TEST_API === 'true';
   const testToken = () => env.TEST_API_TOKEN || (env.NODE_ENV === 'production' ? '' : 'local-development-test');
   /** Returns a Response when the request must be rejected, otherwise null. */
@@ -72,9 +72,9 @@ export function createApi({ store, env }: { store: SellerStore; env: Env }) {
       if (!ns) return fail(400, 'validation_error', 'namespaceId is required');
       return reply(200, store.getState(ns));
     }),
-    testBuild: guarded((req) => {
+    testBuild: guarded(async (req) => {
       const denied = guardTest(req); if (denied) return denied;
-      return reply(200, { buildId: env.SELLER_BUILD_ID || 'seller-demo-local' });
+      return reply(200, { buildId: getBuildId ? await getBuildId() : env.SELLER_BUILD_ID || 'seller-demo-local' });
     }),
     /** Public local-demo flow: creates an isolated namespace and sets an HttpOnly cookie. */
     startSession: guarded(async (req) => {

@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 
-export function StoreForm({ initialName, initialStatus }: { initialName: string; initialStatus: string | null }) {
+export function StoreForm({ initialName, initialStatus, shortTimeout = false }: { initialName: string; initialStatus: string | null; shortTimeout?: boolean }) {
   const [name, setName] = useState(initialName);
   const [saved, setSaved] = useState<{ name: string; status: string } | null>(initialStatus ? { name: initialName, status: initialStatus } : null);
   const [message, setMessage] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
@@ -10,7 +10,7 @@ export function StoreForm({ initialName, initialStatus }: { initialName: string;
     e.preventDefault();
     setBusy(true); setMessage(null);
     try {
-      const res = await fetch('/api/store', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) });
+      const res = await fetch('/api/store', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }), signal: shortTimeout ? AbortSignal.timeout(700) : undefined });
       const body = await res.json();
       if (!res.ok) { setMessage({ kind: 'err', text: body.message ?? 'Could not save the store' }); return; }
       setSaved(body.store); setName(body.store.name);

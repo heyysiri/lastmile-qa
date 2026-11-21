@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GET, POST } from '../apps/lastmile/app/api/runner/[...path]/route';
-import { isSameOriginWrite } from '../apps/lastmile/lib/proxy-policy';
+import { isSameOriginWrite, resolveProxyTarget } from '../apps/lastmile/lib/proxy-policy';
 
 const context = { params: Promise.resolve({ path: ['runs'] }) };
 const request = (method: string, host: string, origin?: string) => new Request('http://localhost:3000/api/runner/runs', {
@@ -26,4 +26,11 @@ describe('privileged proxy authority boundary', () => {
     expect(isSameOriginWrite(new Headers({ host: 'localhost:3000', origin }))).toBe(false);
     expect((await POST(request('POST', 'localhost:3000', origin), context)).status).toBe(403);
   });
+});
+
+it('allows only safe artifact filenames on the read route',()=>{
+ expect(resolveProxyTarget('GET',['runs','run-id','artifacts','final.png'])).toBe('/api/runs/run-id/artifacts/final.png');
+ expect(resolveProxyTarget('GET',['runs','run-id','artifacts','..%2fsecret'])).toBeNull();
+ expect(resolveProxyTarget('POST',['runs','run-id','artifacts','final.png'])).toBeNull();
+ expect(resolveProxyTarget('POST',['investigations'])).toBe('/api/investigations');
 });

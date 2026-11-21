@@ -7,17 +7,19 @@ export function runnerBase(env: Record<string, string | undefined>): string {
 
 /** Returns the runner path (e.g. /api/runs/x) or null when method/path is not allow-listed. */
 export function resolveProxyTarget(method: string, segments: readonly string[]): string | null {
+  if (method === 'GET' && segments.length === 4 && segments[0] === 'runs' && SEG.test(segments[1]) && segments[2] === 'artifacts' && /^[a-zA-Z0-9_-]+\.[a-zA-Z0-9]+$/.test(segments[3])) return `/api/${segments.join('/')}`;
   if (!segments.length || !segments.every(s => SEG.test(s))) return null;
   const [head, id, tail] = segments;
   const path = `/api/${segments.join('/')}`;
   const n = segments.length;
   if (method === 'GET') {
-    if (n === 1 && ['health', 'capabilities', 'scenarios', 'context-packs', 'runs'].includes(head)) return path;
-    if (n === 2 && ['scenarios', 'context-packs', 'runs'].includes(head) && id) return path;
+    if (n === 1 && ['health', 'capabilities', 'scenarios', 'context-packs', 'runs', 'investigations'].includes(head)) return path;
+    if (n === 2 && ['scenarios', 'context-packs', 'runs', 'investigations'].includes(head) && id) return path;
     if (n === 3 && head === 'runs' && tail === 'artifacts') return path;
     return null;
   }
-  if (method === 'POST') return n === 1 && ['scenarios', 'context-packs', 'runs'].includes(head) ? path : null;
+  if (method === 'POST' && n === 3 && head === 'runs' && tail === 'replay') return path;
+  if (method === 'POST') return n === 1 && ['scenarios', 'context-packs', 'runs', 'investigations'].includes(head) ? path : null;
   if (method === 'PUT') return n === 2 && ['scenarios', 'context-packs'].includes(head) ? path : null;
   return null;
 }

@@ -1,8 +1,7 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './runner-ui.fixture';
 import { randomUUID } from 'node:crypto';
-const runner = 'http://127.0.0.1:4000';
 const seller = 'http://127.0.0.1:3001';
-const runnerHeaders = { Authorization: `Bearer ${process.env.RUNNER_API_TOKEN || 'local-development-runner'}` };
+const runnerHeaders = { Authorization: 'Bearer ui-test' };
 const sellerHeaders = { Authorization: `Bearer ${process.env.TEST_API_TOKEN || 'local-development-test'}` };
 
 test('seller onboarding persists through the visible UI and stays namespace isolated', async ({ page, request }) => {
@@ -37,7 +36,8 @@ test('inventory changes persist through the visible UI', async ({ page, request 
   expect((await response.json()).inventory[0].quantity).toBe(23);
 });
 
-test('new scenario revisions and original run snapshots survive configuration changes', async ({ request }) => {
+test('new scenario revisions and original run snapshots survive configuration changes', async ({ request, isolatedRunner }) => {
+  const runner = await isolatedRunner.listen({ host: '127.0.0.1', port: 0 });
   const scenariosResponse = await request.get(`${runner}/api/scenarios`, { headers: runnerHeaders });
   const [template] = await scenariosResponse.json();
   const id = `manual-${randomUUID()}`;

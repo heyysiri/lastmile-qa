@@ -24,8 +24,8 @@ async function handle(req: Request, ctx: { params: Promise<{ path: string[] }> }
   }
   try {
     const upstream = await fetch(`${base}${target}${url.search}`, { method, headers, body, cache: 'no-store', signal: AbortSignal.timeout(15000) });
-    const text = await upstream.text();
-    return new Response(text, { status: upstream.status, headers: { 'content-type': upstream.headers.get('content-type') ?? 'application/json', 'cache-control': 'no-store' } });
+    const data = await upstream.arrayBuffer();
+    return new Response(data, { status: upstream.status, headers: { 'content-type': upstream.headers.get('content-type') ?? 'application/json', 'cache-control': 'no-store' } });
   } catch (e) {
     const reason = e instanceof Error ? (e.cause instanceof Error ? e.cause.message : e.message) : String(e);
     return err(502, 'runner_offline', `Could not reach the runner at ${base} (${reason}). Start it with the dev script and retry.`);

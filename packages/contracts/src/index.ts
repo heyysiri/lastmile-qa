@@ -78,7 +78,7 @@ export function resolveExpected(expected: Expected, inputs: Record<string, Input
 export type RunStatus = 'queued' | 'running' | 'completed' | 'interrupted';
 export type Verdict = 'passed' | 'failed' | 'inconclusive';
 export type AssertionResult = { id: string; status: 'passed' | 'failed' | 'not_evaluated'; expected?: unknown; actual?: unknown; message?: string };
-export type StepEvent = { index: number; timestamp: string; action: string; observation: string; screenshot?: string };
+export type StepEvent = { index: number; timestamp: string; action: string; observation: string; arguments?: unknown; screenshot?: string };
 export type Finding = { kind: 'functional_failure' | 'api_or_outcome_failure' | 'suspected_ux_friction' | 'agent_error' | 'environment_failure' | 'replay_mismatch' | 'inconclusive'; description: string; evidencePaths: string[] };
 export type AppliedCapability = { factor: string; status: 'applied' | 'guidance_only' | 'not_exercised' | 'unsupported'; value: unknown };
 export type RunRecord = {

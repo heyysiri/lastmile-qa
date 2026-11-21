@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './runner-ui.fixture';
 
 test('run detail reload resolves and empty artifacts are not errors', async ({ page }) => {
   await page.goto('/');
@@ -10,16 +10,16 @@ test('run detail reload resolves and empty artifacts are not errors', async ({ p
   await expect(page.getByRole('main').getByRole('alert')).toHaveCount(0);
 });
 
-test('retry after lost launch response uses the same persisted request', async ({ page }) => {
+test('retry after lost launch response uses the same persisted request', async ({ page, isolatedRunner }) => {
   const keys: string[] = [];
   const ids: string[] = [];
   await page.route('**/api/runner/runs', async route => {
     if (route.request().method() !== 'POST') return route.continue();
     keys.push(route.request().postDataJSON().requestId);
-    const response = await route.fetch();
-    ids.push((await response.json()).id);
+    const response = await isolatedRunner.inject({ method: 'POST', url: '/api/runs', headers: { authorization: 'Bearer ui-test', 'content-type': 'application/json' }, payload: route.request().postData()! });
+    ids.push(response.json().id);
     if (keys.length === 1) return route.abort('failed');
-    await route.fulfill({ response });
+    await route.fulfill({ status: response.statusCode, contentType: 'application/json', body: response.body });
   });
   await page.goto('/');
   await page.getByRole('button', { name: 'Launch run' }).click();

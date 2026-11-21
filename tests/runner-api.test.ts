@@ -209,3 +209,50 @@ it('persists an inconclusive environment failure when browser execution is unava
     store.close();
   }
 });
+
+it('rejects investigations without execution or compatible verified references',async()=>{
+ const app=setup();
+ expect((await app.inject({method:'POST',url:'/api/investigations',headers,payload:{}})).statusCode).toBe(503);
+ expect((await app.inject({url:'/api/investigations',headers})).json()).toEqual([]);
+ expect((await app.inject({url:'/api/investigations/missing',headers})).statusCode).toBe(404);
+});
+
+it('serves only manifest-listed artifacts whose bytes still match',async()=>{
+ const {writeArtifactManifest,hashValue}=await import('../apps/runner/src/artifacts');
+ const done=completionSignal();
+ const app=setup({executeRun:async run=>{
+  const directory=join(folder,'artifacts',run.id);mkdirSync(directory,{recursive:true});
+  writeFileSync(join(directory,'final.png'),Buffer.from([137,80,78,71]));
+  const manifest=await writeArtifactManifest(directory);
+  done.resolve();return {...run,status:'completed',verdict:'inconclusive',artifactManifestHash:hashValue(manifest),artifacts:[`${run.id}/final.png`]};
+ }});
+ const response=await app.inject({method:'POST',url:'/api/runs',headers,payload:request});
+ await done.promise;
+ const id=response.json().id;
+ // Worker persistence follows the executor's promise resolution.
+ await new Promise(resolve=>setImmediate(resolve));
+ const artifact=await app.inject({url:`/api/runs/${id}/artifacts/final.png`,headers});
+ expect(artifact.statusCode).toBe(200);expect(artifact.rawPayload).toEqual(Buffer.from([137,80,78,71]));
+ writeFileSync(join(folder,'artifacts',id,'final.png'),'tampered');
+ expect((await app.inject({url:`/api/runs/${id}/artifacts/final.png`,headers})).statusCode).toBe(409);
+});
+
+it('a rejected replay trial becomes terminal and cannot block subsequent runs',async()=>{
+ const {randomUUID}=await import('node:crypto');
+ const app=setup({executeReplay:async()=>{throw new Error('Synthetic artifact failure');}});
+ const store=openRunStore(join(folder,'qa.sqlite'));
+ const scenario={...storeScenario,investigation:{factors:['network' as const],maxAttempts:6}};
+ const reference={requestId:'reference',scenario,context:desktopContext,inputs:{storeName:'Siri Crafts'},status:'completed' as const,createdAt:new Date().toISOString(),manifestHash:'manifest',executionMode:'ai_guided' as const,steps:[],capabilities:[],artifacts:[],evidence:{buildId:'build',scenarioHash:'scenario',policyVersion:'policy',model:'model',modelCalls:2,finishedByAgent:true,actions:[{action:{tool:'navigate' as const,path:'/onboarding'},url:'/onboarding',observation:'page'}]}};
+ const control={...reference,id:randomUUID(),verdict:'passed' as const,assertions:scenario.contract.assertions.map(a=>({id:a.id,status:'passed' as const})),findings:[]};
+ const target={...reference,id:randomUUID(),requestId:'target',context:{...desktopContext,network:{mode:'request_delay' as const,delayMs:500,pathPrefix:'/api/store'}},verdict:'failed' as const,assertions:scenario.contract.assertions.map(a=>({id:a.id,status:'failed' as const})),findings:[{kind:'api_or_outcome_failure' as const,description:'Outcome mismatch',evidencePaths:[]}]};
+ store.insertTrial(control);store.insertTrial(target);store.close();
+ const launch=await app.inject({method:'POST',url:'/api/investigations',headers,payload:{requestId:'failed-trial',targetRunId:target.id,controlRunId:control.id,factors:['network'],maxAttempts:6}});
+ expect(launch.statusCode).toBe(202);
+ await viWait(async()=>{const job=(await app.inject({url:`/api/investigations/${launch.json().id}`,headers})).json();return job.status==='completed';});
+ const records=(await app.inject({url:'/api/runs',headers})).json<RunRecord[]>();
+ expect(records.some(r=>r.status==='running')).toBe(false);
+ expect(records.some(r=>r.findings.some(f=>f.description==='Replay executor could not complete the trial'))).toBe(true);
+ const next=await app.inject({method:'POST',url:'/api/runs',headers,payload:{...request,requestId:'after-trial'}});
+ await viWait(async()=>(await app.inject({url:`/api/runs/${next.json().id}`,headers})).json().status==='completed');
+});
+async function viWait(check:()=>Promise<boolean>){for(let i=0;i<100;i++){if(await check())return;await new Promise(resolve=>setTimeout(resolve,5));}throw new Error('Expected task completion');}

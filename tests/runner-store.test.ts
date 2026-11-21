@@ -82,3 +82,11 @@ it('hashes the configuration independently of request identity and includes cont
   expect(edited.inputs).toEqual(first.inputs);
   expect(edited.manifestHash).not.toBe(first.manifestHash);
 });
+
+it('rejects file bindings until approved fixture registration exists',()=>{
+ const scenario=store.scenarios.get('store-setup',1)!;
+ const context=store.contextPacks.get('desktop-seller',1)!;
+ store.scenarios.create({...scenario,id:'file-task',inputSlots:{document:{type:'file',required:true}},contract:{scope:'ui_only',assertions:[{id:'visible',kind:'visible',locator:{by:'text',value:'Ready'}}]}});
+ store.contextPacks.create({...context,id:'file-context',inputs:{document:{fixtureId:'unregistered'}}});
+ expect(()=>store.enqueue({...request,scenarioId:'file-task',contextPackId:'file-context'},target)).toThrow(expect.objectContaining({code:'unsupported_fixture'}));
+});
