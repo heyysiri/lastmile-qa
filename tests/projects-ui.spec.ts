@@ -205,6 +205,7 @@ const retryable = (job: ProjectRepair) => job.status === 'interrupted'
 
 async function fillConnection(page: Page) {
   await page.getByRole('button', { name: 'New project', exact: true }).click();
+  await page.getByRole('tab', { name: 'Local development' }).click();
   await page.getByLabel('Project name').fill('Room Desk');
   await page.getByLabel('Repository path').fill('/work/room-desk');
   await page.getByLabel('Running app URL').fill('http://127.0.0.1:9000');
@@ -469,7 +470,7 @@ test('keeps setup in an accessible dialog and restores focus on dismissal', asyn
   await expect(dialog.getByLabel('Project name')).toBeFocused();
   await dialog.getByRole('button', { name: 'Close setup' }).focus();
   await page.keyboard.press('Tab');
-  await expect(dialog.getByLabel('Project name')).toBeFocused();
+  await expect(dialog.getByRole('tab', { name: 'GitHub' })).toBeFocused();
   await page.keyboard.press('Shift+Tab');
   await expect(dialog.getByRole('button', { name: 'Close setup' })).toBeFocused();
   await page.keyboard.press('Escape');
@@ -595,6 +596,7 @@ test('allows eight access accounts and explains shared access with separate brow
   await mockApi(page);
   await page.goto('/');
   await page.getByRole('button', { name: 'New project', exact: true }).click();
+  await page.getByRole('tab', { name: 'Local development' }).click();
   await page.getByText('Advanced connection setup', { exact: true }).click();
   await expect(page.getByText(/Add up to 8 existing accounts for access/)).toContainText('separate browser storage');
   for (let index = 0; index < 8; index++) await page.getByRole('button', { name: 'Add development account' }).click();

@@ -3,14 +3,14 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { FilePenLine, ShieldCheck } from 'lucide-react';
+import { ArrowUpRight, FilePenLine, GitPullRequest, ShieldCheck } from 'lucide-react';
 import { VerifyRepairRequestSchema, type PatchProposal } from '@lastmile/contracts/evolution';
 import { ProjectRepairRequestSchema, type Project, type ProjectRepair, type ProjectRun } from '@lastmile/contracts/projects';
 import { api, useLoad } from '../lib/api';
 import { newRequestId } from '../lib/editor';
 import { useJobPolling } from '../lib/evolution';
 import { isActive, usePendingWrite } from '../lib/populations';
-import { canPrepareProjectRepair, projectRepairHref, projectRunHref } from '../lib/projects';
+import { canPrepareProjectRepair, canRetryPublish, projectPublishRequest, projectRepairHref, projectRunHref } from '../lib/projects';
 import { ContextInvestigation, RunFindings, TesterResults } from './ProjectEvidence';
 import { StudioBack, StudioError } from './Studio';
 import { Pending } from './ui';
@@ -32,10 +32,11 @@ function AutomaticRepairStatus({ project, run }: { project: Project; run: Projec
   useJobPolling(active, records.loading, records.reload);
   if (run.repairBlockedReason) return <p className="note warn">{run.repairBlockedReason}</p>;
   if (!latest) return <StudioError error={records.error} onRetry={records.reload} />;
-  const label = active ? latest.phase === 'verify' ? 'Verifying the fix' : 'Preparing a fix' : repairStatus(latest);
+  const label = active ? latest.phase === 'publish' ? 'Publishing pull request' : latest.phase === 'verify' ? 'Verifying the fix' : 'Preparing a fix' : repairStatus(latest);
   return <div className="project-repair-action" aria-live="polite">
     {active ? <Pending label={label} /> : <strong>{label}</strong>}
     <Link className="btn secondary" href={projectRepairHref(latest.id)}>Review fix</Link>
+    <RepairPublication job={latest} onChange={() => void records.reload()} compact />
     <StudioError error={latest.error || records.error} onRetry={records.error ? records.reload : undefined} />
   </div>;
 }
@@ -87,13 +88,47 @@ const verificationStatus = {
   inconclusive: 'Verification inconclusive',
 };
 
-function repairStatus(job: ProjectRepair) {
+export function repairStatus(job: ProjectRepair) {
+  if (job.pullRequest) return 'Pull request ready';
+  if (job.phase === 'publish') {
+    if (job.status === 'queued') return 'Pull request queued';
+    return job.status === 'running' ? 'Publishing pull request' : 'Fix verified, pull request not opened';
+  }
+  if (job.status === 'completed' && job.verification?.outcome === 'verified' && job.project.github) return 'Fix verified, pull request not opened';
   if (job.status === 'interrupted') return job.phase === 'verify' ? 'Verification interrupted' : 'Preparation interrupted';
   if (job.status === 'awaiting_review') return 'Ready for review';
   if (job.status === 'completed') return job.verification ? verificationStatus[job.verification.outcome]
     : job.phase === 'verify' ? 'Verification inconclusive' : 'No patch proposed';
   if (job.phase === 'verify') return job.status === 'queued' ? 'Verification queued' : 'Verifying patch';
   return job.status === 'queued' ? 'Preparation queued' : 'Preparing fix';
+}
+
+/** Opens, links, or retries the pull request for a verified fix without ever regenerating the patch. */
+export function RepairPublication({ job, onChange, compact }: { job: ProjectRepair; onChange: (updated?: ProjectRepair) => void; compact?: boolean }) {
+  const write = usePendingWrite(`lastmile-pending-project-publish-${job.id}`, projectPublishRequest,
+    request => api.publishProjectRepair(job.id, request), (_, updated) => onChange(updated), () => onChange(), true);
+  const opened = Boolean(job.pullRequest);
+  const resolve = write.resolve;
+  useEffect(() => {
+    if (opened && !write.busy) resolve();
+  }, [opened, resolve, write.busy]);
+  if (!job.project.github) return null;
+  const active = job.phase === 'publish' && isActive(job.status);
+  if (!job.pullRequest && !active && !canRetryPublish(job) && !write.pending) return null;
+  const pullRequest = job.pullRequest;
+  return <div className={`project-publication${compact ? ' compact' : ''}`} data-state={pullRequest ? 'opened' : active ? 'publishing' : 'failed'} aria-live="polite">
+    {pullRequest ? <>
+      <a className="btn" href={pullRequest.url} target="_blank" rel="noopener noreferrer">Review pull request<ArrowUpRight size={15} aria-hidden="true" /></a>
+      <p><GitPullRequest size={14} aria-hidden="true" />Pull request #{pullRequest.number} from <code>{pullRequest.branch}</code>. Merge it on GitHub yourself, then choose <strong>Sync &amp; test</strong> to test the merged code.</p>
+    </> : active ? <Pending label="Publishing pull request" /> : <>
+      <p>The fix passed verification, but its pull request was not opened. Retrying opens a pull request from the same verified patch.</p>
+      <button type="button" disabled={!write.ready || write.busy}
+        onClick={() => void write.submit({ requestId: newRequestId() })}>
+        <GitPullRequest size={16} aria-hidden="true" />{write.busy ? 'Opening pull request…' : 'Retry PR'}
+      </button>
+    </>}
+    <StudioError error={write.error} />
+  </div>;
 }
 
 export function ProjectRepairReview({ id }: { id: string }) {
@@ -136,12 +171,13 @@ export function ProjectRepairReview({ id }: { id: string }) {
       {job.verification && <section className="project-report" aria-label="Verification results">
         <h2>Verification results</h2>
         <p>{job.verification.message}</p>
-        {job.verification.outcome === 'verified' && <p>The patch passed verification in the private checkout. You can review and apply it in your own checkout.</p>}
+        {job.verification.outcome === 'verified' && !job.project.github && <p>The patch passed verification in the private checkout. You can review and apply it in your own checkout.</p>}
         {job.verification.outcome === 'verified' ? <details className="project-disclosure">
           <summary>{job.verification.results.reduce((count, result) => count + result.checks.length, 0)} checks passed across {job.verification.results.length} journeys</summary>
           <TesterResults results={job.verification.results} accounts={job.project.accounts} />
         </details> : <TesterResults results={job.verification.results} accounts={job.project.accounts} />}
       </section>}
+      <RepairPublication job={job} onChange={updated => { if (updated) repair.setData(updated); else void repair.reload(); }} />
       {patch && <section className="project-report project-patch" aria-labelledby="patch-heading">
         <h2 id="patch-heading">Proposed patch</h2>
         <p>{patch.summary}</p>

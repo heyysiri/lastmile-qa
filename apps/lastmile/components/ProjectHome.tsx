@@ -2,13 +2,15 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ArrowUpRight, CircleCheck, Clock3, Play, RotateCw, Users } from 'lucide-react';
-import { ProjectRunRequestSchema, type ProjectDetail, type ProjectRun } from '@lastmile/contracts/projects';
+import { ArrowUpRight, CircleCheck, Clock3, GitPullRequestArrow, Play, RotateCw, Users } from 'lucide-react';
+import { ProjectRunRequestSchema, SyncGitHubProjectSchema, type ProjectDetail, type ProjectRun } from '@lastmile/contracts/projects';
 import { api, useLoad } from '../lib/api';
 import { newRequestId } from '../lib/editor';
 import { useJobPolling } from '../lib/evolution';
 import { isActive, usePendingWrite } from '../lib/populations';
-import { projectHref, projectRefreshRequest, projectRunHref } from '../lib/projects';
+import { projectHref, projectRefreshRequest, projectRunHref, shortSha } from '../lib/projects';
+import { GitHubSource } from './GitHubSource';
+import { TestInventory } from './TestInventory';
 import { JourneyStages, MeasuredResults, RunFindings, SourceCitations, TesterAccount, TesterPersona } from './ProjectEvidence';
 import { ProjectRepairAction } from './ProjectRepairReview';
 import { StudioBack, StudioError, TesterFace } from './Studio';
@@ -33,6 +35,10 @@ export function ProjectHome({ id }: { id: string }) {
     request => api.refreshProject(id, request),
     (_, updated) => detail.setData(previous => previous && { ...previous, ...updated }),
     () => { void detail.reload(); }, true);
+  const sync = usePendingWrite(`lastmile-pending-project-sync-${id}`, SyncGitHubProjectSchema,
+    request => api.syncProject(id, request),
+    () => { void detail.reload(); },
+    () => { void detail.reload(); }, true);
   const accepted = Boolean(write.pending && runs.some(run => run.request.requestId === write.pending?.requestId));
   const resolveRun = write.resolve;
   useEffect(() => {
@@ -44,23 +50,37 @@ export function ProjectHome({ id }: { id: string }) {
   const plan = project?.discovery?.plan;
   const discoveryReady = health.data?.projectDiscoveryReady === true && !health.error;
   const executionReady = health.data?.projectExecutionReady === true && !health.error;
-  const requestInFlight = write.busy || refresh.busy;
+  const github = project?.github;
+  const requestInFlight = write.busy || refresh.busy || sync.busy;
   const canRun = project?.status === 'ready' && executionReady && (hasCompleted ? discoveryReady : true);
   const canRefresh = Boolean(project && project.status !== 'discovering' && discoveryReady);
+  const canSync = Boolean(project && project.status !== 'discovering' && discoveryReady && executionReady && !active && !activeRepair);
+  const syncFirst = Boolean(github && hasCompleted);
 
   function runButton(recovering = false) {
     if (!recovering && write.pending) return null;
     return <button type="button"
-      disabled={!write.ready || requestInFlight || Boolean(refresh.pending) || detail.loading || Boolean(detail.error) || (!recovering && !canRun)}
+      disabled={!write.ready || requestInFlight || Boolean(refresh.pending) || Boolean(sync.pending) || detail.loading || Boolean(detail.error) || (!recovering && !canRun)}
       onClick={() => { setTab('results'); void write.submit({ requestId: newRequestId(), mode: hasCompleted ? 'release' : 'explore', autoRepair: true }); }}>
       <Play size={16} aria-hidden="true" />
       {write.busy ? 'Starting team…' : recovering ? 'Recover run request' : hasCompleted ? 'Test changes' : 'Run test team'}
     </button>;
   }
 
+  function syncButton(recovering = false, run = true) {
+    if (!recovering && sync.pending) return null;
+    const disabled = !sync.ready || requestInFlight || Boolean(write.pending) || Boolean(refresh.pending) || detail.loading || Boolean(detail.error)
+      || (!recovering && !(run ? canSync : canRefresh));
+    return <button type="button" className={run ? undefined : 'secondary'} disabled={disabled}
+      onClick={() => { if (run) setTab('results'); void sync.submit({ requestId: newRequestId(), run }); }}>
+      {run ? <GitPullRequestArrow size={16} aria-hidden="true" /> : <RotateCw size={15} aria-hidden="true" />}
+      {sync.busy ? 'Syncing…' : recovering ? 'Recover sync request' : run ? 'Sync & test' : 'Retry sync'}
+    </button>;
+  }
+
   function refreshButton() {
     return <button type="button" className="secondary"
-      disabled={!refresh.ready || requestInFlight || Boolean(write.pending) || detail.loading || Boolean(detail.error) || (!refresh.pending && !canRefresh)}
+      disabled={!refresh.ready || requestInFlight || Boolean(write.pending) || Boolean(sync.pending) || detail.loading || Boolean(detail.error) || (!refresh.pending && !canRefresh)}
       onClick={() => void refresh.submit({ requestId: newRequestId() })}>
       <RotateCw size={15} aria-hidden="true" />
       {refresh.busy ? 'Refreshing…' : refresh.pending ? 'Recover refresh request' : 'Refresh understanding'}
@@ -73,22 +93,25 @@ export function ProjectHome({ id }: { id: string }) {
     {!project && !detail.error && <Pending label="Loading project…" />}
     {project && <>
       <header className="studio-heading project-page-heading project-heading-with-action">
-        <div><h1>{project.name}</h1><a className="project-app-link" href={project.appUrl} target="_blank" rel="noreferrer">{project.appUrl}<ArrowUpRight size={14} aria-hidden="true" /></a></div>
-        {!active && !activeRepair && project.status === 'ready' && runButton()}
+        <div><h1>{project.name}</h1>{github ? <GitHubSource project={project} />
+          : <a className="project-app-link" href={project.appUrl} target="_blank" rel="noreferrer">{project.appUrl}<ArrowUpRight size={14} aria-hidden="true" /></a>}</div>
+        {!active && !activeRepair && project.status === 'ready' && (syncFirst ? syncButton() : runButton())}
       </header>
       {project.status === 'discovering' && <div className="project-progress"><Pending label={project.progress || 'Discovery queued'} /></div>}
       {project.status === 'failed' && <div className="project-progress">
         <h2>Discovery needs attention</h2>
         <p>{project.error || project.progress || 'Discovery ended before the project was ready.'}</p>
-        {!refresh.pending && refreshButton()}
+        {github ? !sync.pending && syncButton(false, false) : !refresh.pending && refreshButton()}
       </div>}
       {active && <TeamProgress run={active} />}
-      {(write.pending && !accepted || refresh.pending) && <div className="project-progress">
+      {(write.pending && !accepted || refresh.pending || sync.pending) && <div className="project-progress">
         {write.pending && !accepted && runButton(true)}
         {refresh.pending && refreshButton()}
+        {sync.pending && syncButton(true, sync.pending.run)}
       </div>}
       <StudioError error={write.error} />
       <StudioError error={refresh.error} />
+      <StudioError error={sync.error} />
       {project.status === 'ready' && !active && !activeRepair && !write.pending && !health.loading && !canRun && <p className="note warn">
         {executionReady ? 'Enable project discovery on the runner to test changes against refreshed source.' : 'Enable project execution on the runner to run the test team.'}
       </p>}
@@ -117,6 +140,7 @@ export function ProjectHome({ id }: { id: string }) {
           <TesterFace index={i} />
           <div><h3>{tester.name}</h3><p>{tester.role}</p><TesterPersona tester={tester} /><small><TesterAccount tester={tester} accounts={project.accounts} /></small></div>
         </article>)}</div>
+        <TestInventory cases={project.cases} coverageMode={github?.coverageMode} />
         <div className="project-understanding">
           <div className="project-section-heading"><h2>What the team found in the app</h2></div>
           <ul className="project-feature-list">{plan.features.map(feature => <li key={feature.id}>{feature.title}</li>)}</ul>
@@ -147,7 +171,7 @@ export function ProjectHome({ id }: { id: string }) {
           </details>
         </div>
       </section>}
-      {project.status === 'ready' && !active && !activeRepair && !refresh.pending && <div className="project-refresh">
+      {project.status === 'ready' && !github && !active && !activeRepair && !refresh.pending && <div className="project-refresh">
         {refreshButton()}
         {!discoveryReady && !health.loading && <p className="field-hint">Enable project discovery on the runner to refresh the application understanding.</p>}
       </div>}
@@ -176,7 +200,7 @@ function ProjectHistory({ project, runs }: { project: ProjectDetail; runs: Proje
       </li>;
     })}</ul>}
     {runs.length > 0 && <ul>{runs.map(run => <li key={run.id}>
-      <Link href={projectRunHref(project.id, run.id)}>{run.request.mode === 'explore' ? 'First look' : 'Test changes'} · <time dateTime={run.createdAt}>{new Date(run.createdAt).toLocaleString()}</time></Link>
+      <Link href={projectRunHref(project.id, run.id)}>{run.request.mode === 'explore' ? 'First look' : 'Test changes'}{run.revision && <> · <code>{shortSha(run.revision)}</code></>} · <time dateTime={run.createdAt}>{new Date(run.createdAt).toLocaleString()}</time></Link>
     </li>)}</ul>}
   </section>;
 }
@@ -202,7 +226,7 @@ export function ProjectRunPage({ projectId, runId }: { projectId: string; runId:
     {run.data && !data && <p className="note warn">This run belongs to a different project.</p>}
     {(!run.data || !project.data) && !project.error && !run.error && <Pending label="Loading results…" />}
     {data && project.data && <>
-      <header className="studio-heading project-page-heading"><h1>{project.data.name}</h1><p>{data.request.mode === 'explore' ? 'First look' : 'Test changes'}</p></header>
+      <header className="studio-heading project-page-heading"><h1>{project.data.name}</h1><p>{data.request.mode === 'explore' ? 'First look' : 'Test changes'}{data.revision && <> · <code>{shortSha(data.revision)}</code></>}</p></header>
       {isActive(data.status) ? <TeamProgress run={data} /> : <RunFindings run={data} project={project.data} title="Findings"
         actions={<ProjectRepairAction run={data} project={project.data} />} />}
     </>}
