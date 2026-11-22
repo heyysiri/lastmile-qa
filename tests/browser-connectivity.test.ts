@@ -159,6 +159,10 @@ describe('connectivity [chromium]', () => {
     app = createServer(async (request, response) => {
       const url = new URL(request.url ?? '/', 'http://local');
       if (url.pathname === '/ping') { hits.ping++; return response.writeHead(200, { 'cache-control': 'no-store' }).end('pong'); }
+      if (url.pathname === '/large-page') {
+        return response.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store' })
+          .end('<title>Large page</title><h1>Ready</h1><!--' + 'x'.repeat(48 * 1024) + '-->');
+      }
       if (url.pathname === '/blob') {
         hits.blob++;
         return response.writeHead(200, { 'cache-control': 'no-store', 'content-type': 'application/octet-stream' })
@@ -211,6 +215,15 @@ describe('connectivity [chromium]', () => {
   }, [target, init] as const) as Promise<Timed>;
   const profileOf = (browser: BrowserSession) => browser.capabilities.find(item => item.factor === 'network');
   const changes = (browser: BrowserSession) => browser.networkEvents.filter(event => (event as { kind?: string }).kind === 'connectivity_change');
+
+  it('allows a throttled page transfer longer than the normal five-second action budget', async () => {
+    const browser = await open({ mode: 'throttled', latencyMs: 100, downloadKbps: 64, uploadKbps: 128 });
+    const started = performance.now();
+    await browser.execute({ tool: 'navigate', path: '/large-page' });
+    expect(performance.now() - started).toBeGreaterThan(5000);
+    expect(await browser.page.getByRole('heading', { name: 'Ready' }).isVisible()).toBe(true);
+    expect(browser.actions).toHaveLength(1);
+  }, 20_000);
 
   it('blocks real local HTTP while offline and restores it when switched back to normal', async () => {
     const browser = await open();

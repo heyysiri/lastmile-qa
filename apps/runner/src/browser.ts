@@ -498,7 +498,10 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
       if (index >= actionLimit) throw new BrowserActionError('Browser action budget exhausted');
       const seq = ++index;
       const timestamp = new Date().toISOString();
-      const end = Math.min(deadline, performance.now() + 5_000);
+      // A throttled initial document also transfers its application bundle. Keep
+      // that bounded separately from ordinary interactions and the whole journey.
+      const actionTimeout = action?.tool === 'navigate' && profile.mode === 'throttled' ? 60_000 : 5_000;
+      const end = Math.min(deadline, performance.now() + actionTimeout);
       const remaining = () => Math.max(1, Math.ceil(end - performance.now()));
       const stepSignal = AbortSignal.any([journeySignal, AbortSignal.timeout(remaining())]);
       const timing = () => ({ timeout: remaining(), signal: stepSignal });
