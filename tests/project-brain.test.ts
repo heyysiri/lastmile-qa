@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -493,8 +494,12 @@ describe('repository brain', () => {
     expect(ranked.map(ref => ref.path)).toEqual(['runtime/view.py', 'archive/view.py']);
   });
 
-  it('finds matching routes in a workspace imported by the startup before other workspaces', async () => {
+  it.each([false, true])('finds active workspace routes when startup is gitignored=%s', async ignored => {
     project.commands = { cwd: 'runtime', start: ['node', 'start.mjs'] };
+    if (ignored) {
+      execFileSync('git', ['init', '-q', fixture]);
+      await writeFile(join(fixture, '.gitignore'), '/runtime/\n');
+    }
     await mkdir(join(fixture, 'runtime'));
     await mkdir(join(fixture, 'packages/active-ui'), { recursive: true });
     await mkdir(join(fixture, 'archive'));

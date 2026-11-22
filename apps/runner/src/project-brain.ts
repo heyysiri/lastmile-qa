@@ -312,7 +312,7 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
     const startUrl = new URL(project.appUrl);
     const startPath = startUrl.pathname + startUrl.search + startUrl.hash;
     const cwd = project.commands?.cwd;
-    const workspaces = startupWorkspaces(index, cwd);
+    const workspaces = await startupWorkspaces(index, cwd);
     const sourceRelevance = (path: string) => cwd && path.startsWith(cwd + '/') ? 2
       : Number(workspaces.some(directory => path.startsWith(directory + '/')));
     let sourceCalls = 0;

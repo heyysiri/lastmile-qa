@@ -33,10 +33,32 @@ const git = promisify(execFile);
 const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 const contentByIndex = new WeakMap<RepositoryIndex, Map<string, string>>();
 
-export function startupWorkspaces(index: RepositoryIndex, cwd?: string) {
+export async function startupWorkspaces(index: RepositoryIndex, cwd?: string) {
   const packageNames = new Set(index.files
     .filter(file => file.kind === 'code' && posix.dirname(file.path) === (cwd ?? '.'))
     .flatMap(file => file.imports.map(name => name.split('/').slice(0, name.startsWith('@') ? 2 : 1).join('/'))));
+  // Managed launch files can be gitignored. Read only their import names as
+  // routing hints; ignored contents never become indexed/citable source.
+  if (cwd) {
+    const directory = resolve(index.root, cwd);
+    if ((directory === index.root || directory.startsWith(index.root + sep)) &&
+        await realpath(directory).catch(() => undefined) === directory) {
+      const indexed = new Set(index.files.map(file => file.path));
+      const entries = await readdir(directory, { withFileTypes: true });
+      for (const entry of entries.filter(entry => entry.isFile()).sort((a, b) => a.name.localeCompare(b.name)).slice(0, 64)) {
+        const path = posix.join(cwd, entry.name);
+        const info = candidate(path);
+        if (indexed.has(path) || info?.kind !== 'code') continue;
+        const metadata = await lstat(join(directory, entry.name));
+        if (metadata.size > 256 * 1024) continue;
+        const source = await readContained(index.root, path, 256 * 1024);
+        if (!source) continue;
+        for (const name of sourceLinks(path, info.language, source.content).imports) {
+          packageNames.add(name.split('/').slice(0, name.startsWith('@') ? 2 : 1).join('/'));
+        }
+      }
+    }
+  }
   const workspaces: string[] = [];
   for (const { path } of index.files) {
     if (!path.endsWith('/package.json')) continue;

@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { readRepositorySource, scanRepository, searchRepository } from '../apps/runner/src/repository-index';
+import { readRepositorySource, scanRepository, searchRepository, startupWorkspaces } from '../apps/runner/src/repository-index';
 
 let root: string;
 const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args]);
@@ -39,6 +39,21 @@ describe('repository index', () => {
     ]);
     expect(await searchRepository(index, 'nonexistentterm')).toEqual([]);
     expect(JSON.stringify(index)).not.toContain('assert gauge.stores_spring_tide');
+  });
+
+  it('uses ignored startup imports only as hints and excludes secret-bearing or symlinked launch files', async () => {
+    await file('.gitignore', '/runtime/\n');
+    await file('runtime/start.mjs', 'import "@example/active/browser";');
+    await file('packages/ui/package.json', '{"name":"@example/active"}');
+    const index = await scanRepository(root);
+    expect(await startupWorkspaces(index, 'runtime')).toEqual(['packages/ui']);
+    expect(index.files.map(item => item.path)).toEqual(['packages/ui/package.json']);
+    await expect(readRepositorySource(index, 'runtime/start.mjs')).rejects.toThrow(/outside the repository index/);
+    await file('runtime/start.mjs', 'import "@example/active/browser"; const apiKey = "private-value-never-send";');
+    expect(await startupWorkspaces(index, 'runtime')).toEqual([]);
+    await symlink(join(root, 'packages/ui'), join(root, 'linked-startup'));
+    expect(await startupWorkspaces(index, 'linked-startup')).toEqual([]);
+    expect(await startupWorkspaces(index, '../')).toEqual([]);
   });
 
   it('excludes secrets, dependencies, tracked generated files, ignored source and symlinks', async () => {
