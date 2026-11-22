@@ -195,7 +195,10 @@ function ProjectHistory({ project, runs }: { project: ProjectDetail; runs: Proje
       return <li key={`${event.testerId}-${event.runId}-${index}`}>
         {tester && <p><strong>{tester.name} · {tester.role}</strong><br /><TesterAccount tester={tester} accounts={project.accounts} /></p>}
         <p>{event.goal} <span className="badge">{event.outcome}</span></p>
-        {event.observations.length > 0 && <ul>{event.observations.map((observation, i) => <li key={i}>{observation}</li>)}</ul>}
+        {event.observations.length > 0 && <details className="project-disclosure">
+          <summary>Browser details</summary>
+          {event.observations.map((observation, i) => <pre key={i}>{observation}</pre>)}
+        </details>}
         {run && <Link href={projectRunHref(project.id, run.id)}>View run results</Link>}
       </li>;
     })}</ul>}
