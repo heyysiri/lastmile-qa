@@ -16,7 +16,7 @@ export const credentials = JSON.parse(readFileSync(resolve(dataDir, 'credentials
 export const config: VendureConfig = {
     apiOptions: {
         hostname: '127.0.0.1',
-        port: Number(process.env.PORT || 9005),
+        port: Number(process.env.PORT || 0),
         adminApiPath: 'admin-api',
         shopApiPath: 'shop-api',
     },
