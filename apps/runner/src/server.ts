@@ -264,7 +264,7 @@ export function createServer(options: ServerOptions) {
     projectDiscoveryReady:Boolean(options.projectRuntime),projectExecutionReady:Boolean(options.projectRuntime),projectRepairsReady:Boolean(options.projectRuntime?.repair),
   }));
   app.get('/api/capabilities', async () => capabilities);
-  registerProjectRoutes(app,store.projects,{startWorker,repairsReady:Boolean(options.projectRuntime?.repair)});
+  registerProjectRoutes(app,store.projects,{startWorker,repairsReady:Boolean(options.projectRuntime?.repair),repositoryReady:Boolean(options.projectRuntime?.repository)});
   registerStudyRoutes(app, store.studies, {
     applications: options.applications ?? [],
     generateStudy: options.generateStudy,
