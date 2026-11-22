@@ -222,7 +222,8 @@ export function createProjectStore(db:Database.Database){
   return {privateData:{accounts},fields:{repositoryPath,appUrl,allowedOrigins,commands,
    accounts:accounts.map(({id,label})=>({id,label})),
    github:{...project.github,sha:prepared.github.sha,syncedAt:mode==='resume'?project.github.syncedAt:prepared.github.syncedAt,
-    coverageMode:mode==='resume'?project.github.coverageMode:prepared.github.coverageMode},
+    coverageMode:mode==='resume'?project.github.coverageMode:prepared.github.coverageMode,
+    verifiedCoverageRunId:mode==='resume'?project.github.verifiedCoverageRunId:prepared.github.verifiedCoverageRunId},
   }};
  }
  async function execute(job:Job,runtime?:ProjectRuntime){

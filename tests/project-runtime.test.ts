@@ -203,3 +203,28 @@ it('retains users and frozen cases without regenerating coverage after an approv
  expect(released.results.map(result=>result.journey)).toEqual(baseline.results.map(result=>result.journey));
  expect(released.metrics.passed).toBe(2);expect(released.discovery?.index.version).not.toBe(baseline.discovery?.index.version);
 });
+
+it.each([false,true])('carries frozen implementation checks only with matching verified release evidence (verified=%s)',async verified=>{
+ const f=await fixture();f.setDefect(false);
+ await writeFile(join(f.root,'implementation.ts'),"export const field = 'Name';\n");
+ const index=await scanRepository(f.root),source=await readRepositorySource(index,'implementation.ts');
+ f.discovery.index={...index,fileCount:index.files.length};
+ f.discovery.plan.journeys[0].checks[0]={...f.discovery.plan.journeys[0].checks[0],basis:'implementation',sources:[source]};
+ const discover=vi.fn(async()=>{throw new Error('Must retain the existing team');});
+ const runtime=createProjectRuntime({privateRoot:join(f.root,'.private'),artifactRoot:join(f.root,'.artifacts'),model:'test',discover,actor:saveName});
+ const baseline=await runtime.execute(f.project,{accounts:[]},{...f.run,revision:'a'.repeat(40)},[],()=>{});
+ await writeFile(join(f.root,'implementation.ts'),"export const field = 'Name'; // fixed initialization\n");
+ const project={...f.project,github:{repositoryUrl:'https://github.com/test/app',branch:'demo',setup:'custom' as const,entryPath:'/',coverageMode:'retain' as const,sha:'b'.repeat(40),verifiedCoverageRunId:verified?baseline.id:'different-run'}};
+ const release={...f.run,id:'verified-release',revision:'b'.repeat(40),request:{requestId:'verified-release',mode:'release' as const}};
+ const result=await runtime.execute(project,{accounts:[]},release,[],()=>{},baseline);
+ expect(discover).not.toHaveBeenCalled();expect(result.results[0].journey).toEqual(baseline.results[0].journey);
+ expect(result.results[0].checks[0].status).toBe(verified?'passed':'not_evaluated');
+ expect(result.results[0].checks[0].basis).toBe('implementation');
+ if(verified){
+  const repeated=await runtime.execute(project,{accounts:[]},{...release,id:'same-release'},[],()=>{},result);
+  expect(repeated.results[0].checks[0].status).toBe('passed');
+  await writeFile(join(f.root,'requirements.md'),'Changed requirements require new review.');
+  const changed=await runtime.execute(project,{accounts:[]},{...release,id:'changed-requirements'},[],()=>{},result);
+  expect(changed.results[0].checks[1].status).toBe('not_evaluated');
+ }
+},20000);

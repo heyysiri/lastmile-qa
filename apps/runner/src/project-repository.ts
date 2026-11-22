@@ -35,13 +35,14 @@ export function createProjectRepository(options:Options):ProjectRepositoryRuntim
   finally{clearTimeout(timer);await child.close();if(operation===child)operation=undefined;}
  }
  async function cwdFor(root:string,commands:ProjectCommands){const canonical=await realpath(root);const cwd=await realpath(resolve(canonical,commands.cwd??'.'));if(cwd!==canonical&&!cwd.startsWith(canonical+sep))throw new Error('Application working directory leaves its managed checkout');return cwd;}
- async function retained(root:string,oldSha:string|undefined,sha:string,repairs:ProjectRepair[]){
-  if(oldSha===sha)return true;if(!oldSha)return false;
+ async function retained(root:string,oldSha:string|undefined,sha:string,repairs:ProjectRepair[],verifiedCoverageRunId?:string){
+  if(oldSha===sha)return {coverageMode:'retain' as const,verifiedCoverageRunId};
+  if(!oldSha)return {coverageMode:'refresh' as const,verifiedCoverageRunId:undefined};
   const paths=(await git(root,['diff','--name-only',oldSha,sha])).split('\n').filter(Boolean).sort();
   for(const repair of repairs){if(repair.verification?.outcome!=='verified'||repair.sourceRun.revision!==oldSha||!repair.patch)continue;
    if(JSON.stringify(paths)!==JSON.stringify(repair.patch.changes.map(c=>c.path).sort()))continue;
-   if((await Promise.all(repair.patch.changes.map(async change=>await readFile(join(root,change.path),'utf8')===change.after))).every(Boolean))return true;
-  }return false;
+   if((await Promise.all(repair.patch.changes.map(async change=>await readFile(join(root,change.path),'utf8')===change.after))).every(Boolean))return {coverageMode:'retain' as const,verifiedCoverageRunId:repair.sourceRun.id};
+  }return {coverageMode:'refresh' as const,verifiedCoverageRunId:undefined};
  }
  return {
   async prepare(project,secrets,mode,onProgress,repairs){
@@ -102,8 +103,8 @@ export function createProjectRepository(options:Options):ProjectRepositoryRuntim
      if(!ready)throw new Error('Application did not become ready. Check its start command and entry path.');
     }catch(error){await stop();throw error;}
    }
-   const coverageMode=mode==='resume'?github.coverageMode:await retained(directory,github.sha,sha,repairs)?'retain':'refresh';
-   return {repositoryPath:directory,appUrl,allowedOrigins:[new URL(appUrl).origin],commands,accounts,github:{...github,entryPath,sha,coverageMode,syncedAt:mode==='resume'?github.syncedAt:new Date().toISOString()}};
+   const coverage=mode==='resume'?{coverageMode:github.coverageMode,verifiedCoverageRunId:github.verifiedCoverageRunId}:await retained(directory,github.sha,sha,repairs,github.verifiedCoverageRunId);
+   return {repositoryPath:directory,appUrl,allowedOrigins:[new URL(appUrl).origin],commands,accounts,github:{...github,entryPath,sha,...coverage,syncedAt:mode==='resume'?github.syncedAt:new Date().toISOString()}};
   },
   async publish(repair){
    if(repair.verification?.outcome!=='verified'||!repair.patch||!repair.sourceRun.revision||!repair.project.github)throw new Error('Only a verified GitHub repair can be published');

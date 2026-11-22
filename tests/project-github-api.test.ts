@@ -128,11 +128,19 @@ it('syncs once per request and queues a pinned release run while preserving prio
  await expect.poll(async()=>(await project.detail()).github?.lastTestedSha).toBe(sha);
  const before=await project.detail();
  const syncUrl=`${project.url}/sync`;
+ const prepare=runtime.repository.prepare.getMockImplementation()!;
+ runtime.repository.prepare.mockImplementation(async(...args)=>{
+  const prepared=await prepare(...args);
+  if(args[2]==='sync')prepared.github={...prepared.github,coverageMode:'retain',verifiedCoverageRunId:before.runs[0].id};
+  return prepared;
+ });
  expect((await api.post(syncUrl,{requestId:'sync'})).statusCode).toBe(202);
  expect((await api.post(syncUrl,{requestId:'sync',run:true})).statusCode).toBe(202);
  expect((await api.post(syncUrl,{requestId:'sync',run:false})).statusCode).toBe(409);
  await expect.poll(async()=>(await project.detail()).github?.lastTestedSha).toBe(nextSha);
  const after=await project.detail();
+ expect(after.github?.verifiedCoverageRunId).toBe(before.runs[0].id);
+ expect(runtime.execute.mock.calls.at(-1)?.[0].github?.verifiedCoverageRunId).toBe(before.runs[0].id);
  expect(after.accounts).toEqual(before.accounts);
  expect(after.discovery?.plan.testers).toEqual(before.discovery?.plan.testers);
  expect(after.runs).toHaveLength(2);

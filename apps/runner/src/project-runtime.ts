@@ -225,6 +225,13 @@ export function createProjectRuntime(options:Options):ProjectRuntime&{replay:(pr
  async function execute(project:Project,secrets:ProjectSecrets,input:ProjectRun,history:ProjectHistory[],onUpdate:(run:ProjectRun)=>void,previousRun?:ProjectRun){
   const started=Date.now(),run=structuredClone(input);const index=await scanRepository(project.repositoryPath);
   const prior=input.request.mode==='release'?(previousRun?.results??[]):[];
+  const retain=project.github?.coverageMode==='retain'&&input.request.mode==='release'&&prior.length>0;
+  const verifiedTransition=retain&&previousRun?.status==='completed'&&!previousRun.error&&
+   project.github?.verifiedCoverageRunId===previousRun.id&&previousRun.revision!==project.github.sha;
+  const unchangedRevision=retain&&previousRun?.status==='completed'&&!previousRun.error&&
+   previousRun.sourceVersion===index.version&&previousRun.revision===project.github?.sha;
+  const evaluatedChecks=new Set((verifiedTransition||unchangedRevision)?prior.flatMap(result=>result.journey.checks
+   .filter(check=>result.checks.some(outcome=>outcome.id===check.id&&outcome.status!=='not_evaluated')).map(check=>hashValue(check))):[]);
   const privateValues=sessions.privateValues(secrets).filter(Boolean);
   const isCurrent=currentSourceCheck(project,index);
   const currentCheck=(check:ProjectCheck)=>{
@@ -232,12 +239,12 @@ export function createProjectRuntime(options:Options):ProjectRuntime&{replay:(pr
     const kind=ref.path==='$brief'||ref.path==='$requirements'?'requirement':repositorySourceKind(ref.path);
     return check.basis==='implementation'?kind==='code'||kind==='config':kind===check.basis;
    });
-   return basisSources.length>0&&basisSources.every(isCurrent);
+   return basisSources.length>0&&(basisSources.every(isCurrent)||(check.basis==='implementation'&&evaluatedChecks.has(hashValue(check))&&
+    basisSources.every(ref=>index.files.some(file=>file.path===ref.path&&(file.kind==='code'||file.kind==='config')))));
   };
   if(prior.some(r=>r.journey.checks.some(c=>containsPrivateValue(c.expected,privateValues))))
    throw new Error('Prior coverage contains a private account value and cannot be published');
   let discovery=project.discovery;
-  const retain=project.github?.coverageMode==='retain'&&input.request.mode==='release'&&prior.length>0;
   if(retain&&discovery){
    const previous=previousRun?.discovery??discovery;
    discovery={...previous,index:{version:index.version,sourceLines:index.sourceLines,excludedFiles:index.excludedFiles,indexedAt:index.indexedAt,changedPaths:index.changedPaths,fileCount:index.files.length},plan:{...previous.plan,journeys:[]},observations:[],modelCalls:0};
