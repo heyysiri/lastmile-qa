@@ -1,0 +1,7 @@
+import {expect,it} from 'vitest';
+import {ConnectGitHubProjectSchema,SyncGitHubProjectSchema} from '../packages/contracts/src/projects';
+const input={requestId:'connect',name:'Commerce',repositoryUrl:'https://github.com/heyysiri/vendure',branch:'lastmile-demo',brief:'Test marketplace staff returning to saved work'};
+it('accepts simple GitHub setup with safe defaults',()=>{expect(ConnectGitHubProjectSchema.parse(input)).toMatchObject({setup:'auto',entryPath:'/',accounts:[],requirements:''});expect(SyncGitHubProjectSchema.parse({requestId:'sync'}).run).toBe(true);});
+it.each(['https://evil.test/a/b','https://token@github.com/a/b','https://github.com/a/b?token=x','https://github.com/a/b/tree/main'])('rejects unsupported repository URL %s',repositoryUrl=>{expect(ConnectGitHubProjectSchema.safeParse({...input,repositoryUrl}).success).toBe(false);});
+it.each(['-main','a..b','a b','a@{x','a.lock','a/../b'])('rejects unsafe branch %s',branch=>{expect(ConnectGitHubProjectSchema.safeParse({...input,branch}).success).toBe(false);});
+it('requires start commands for custom setup and rejects secret inputs',()=>{expect(ConnectGitHubProjectSchema.safeParse({...input,setup:'custom'}).success).toBe(false);expect(ConnectGitHubProjectSchema.safeParse({...input,token:'private'}).success).toBe(false);expect(ConnectGitHubProjectSchema.parse({...input,setup:'custom',commands:{start:['npm','start']}}).setup).toBe('custom');});
