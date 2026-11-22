@@ -29,7 +29,7 @@ export type BrowserSession = {
   page: Page;
   execute(action: BrowserAction): Promise<string>;
   observe(): Promise<string>;
-  refreshObservation(): Promise<string>;
+  refreshObservation(waitFor?: LocatorSpec): Promise<string>;
   inspectReplayPosition(): Promise<{url:string;focus:string}>;
   /**
    * Runtime-owned (never a model tool): replaces the active network profile. The initial pack profile is applied
@@ -480,12 +480,15 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
       return 'URL: ' + redact(cleanUrl(url)) + '\nFocused: ' + (redact(focusRef).trim().split('\n')[0] || 'none') + '\n' + snapshot;
     }
 
-    async function refreshObservation() {
+    async function refreshObservation(waitFor?: LocatorSpec) {
       if(busy||closing||page.isClosed())throw new BrowserActionError('Browser observation is unavailable');
       journeySignal.throwIfAborted();
       busy=true;
       try {
-        const timeout=Math.max(1,Math.min(5000,Math.ceil(deadline-performance.now())));
+        const waitBudget = waitFor && profile.mode === 'throttled' ? 60_000 : 5_000;
+        const end = Math.min(deadline, performance.now() + waitBudget);
+        if (waitFor) await semanticLocator(page, waitFor).waitFor({state:'visible',timeout:Math.max(1,Math.ceil(end-performance.now()))});
+        const timeout=Math.max(1,Math.min(5000,Math.ceil(end-performance.now())));
         return await snapshot({timeout,signal:AbortSignal.any([journeySignal,AbortSignal.timeout(timeout)])});
       } finally {busy=false;}
     }

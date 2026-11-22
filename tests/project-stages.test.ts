@@ -10,10 +10,10 @@ import type {Project,ProjectDiscovery,ProjectRun} from '../packages/contracts/sr
 import type {runAgent} from '../apps/runner/src/agent';
 const roots:string[]=[],servers:Server[]=[];
 afterEach(async()=>{for(const s of servers.splice(0))await new Promise<void>(r=>s.close(()=>r()));for(const root of roots.splice(0))await rm(root,{recursive:true,force:true});});
-async function fixture(persist:boolean,delayed=false){
+async function fixture(persist:boolean,delayed=false,hydrating=false){
  const root=await mkdtemp(join(tmpdir(),'project-stages-'));roots.push(root);
  await writeFile(join(root,'requirements.md'),'The draft must survive closing and reopening the browser.');
- const server=createServer((_q,r)=>{r.setHeader('content-type','text/html');r.end(`<main><label>Draft<input oninput="${persist?(delayed?"const value=this.value;setTimeout(()=>localStorage.setItem('draft',value),900)":"localStorage.setItem('draft',this.value)"):"sessionStorage.setItem('draft',this.value)"}"></label><label>Temporary<input oninput="sessionStorage.setItem('temp',this.value)"></label></main><script>document.querySelector('input').value=${persist?'localStorage':'sessionStorage'}.getItem('draft')||'';document.querySelectorAll('input')[1].value=sessionStorage.getItem('temp')||''</script>`);});servers.push(server);
+ const server=createServer((_q,r)=>{r.setHeader('content-type','text/html');const html=`<main><label>Draft<input oninput="${persist?(delayed?"const value=this.value;setTimeout(()=>localStorage.setItem('draft',value),900)":"localStorage.setItem('draft',this.value)"):"sessionStorage.setItem('draft',this.value)"}"></label><label>Temporary<input oninput="sessionStorage.setItem('temp',this.value)"></label></main><script>document.querySelector('input').value=${persist?'localStorage':'sessionStorage'}.getItem('draft')||'';document.querySelectorAll('input')[1].value=sessionStorage.getItem('temp')||''</script>`;r.end(hydrating?html.replace('<main>','<template id="pending"><main>').replace('</main>','</main></template>').replace('<script>','<script>setTimeout(()=>{document.body.append(document.querySelector("template").content.cloneNode(true));').replace('</script>','},900)</script>'):html);});servers.push(server);
  await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const origin=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
  const index=await scanRepository(root),source=await readRepositorySource(index,'requirements.md');
  const tester={id:'returning',name:'Returning seller',role:'Seller',summary:'Interrupted work',context:{...projectBrowserContext,id:'returning'}};
@@ -84,4 +84,20 @@ it('applies offline and recovery between stages while retaining the same browser
  const replay=await runtime.replay(f.project,{accounts:[]},result,join(f.root,'.private','snapshots',f.run.id,'sessions'));
  expect(replay.results[0].run.evidence?.stages?.map(s=>s.network.mode)).toEqual(['normal','offline','normal']);
  expect(replay.results[0].run).toMatchObject({verdict:'passed',evidence:{modelCalls:0,replayCompatible:true}});
+},20000);
+
+it('waits for a recorded form control to hydrate during zero-model staged replay',async()=>{
+ const f=await fixture(true,false,true);
+ const actor=vi.fn<typeof runAgent>(async session=>{
+  await session.page.getByLabel('Draft').waitFor({state:'visible'});
+  await session.refreshObservation();
+  await session.execute({tool:'fill',locator:{by:'label',value:'Draft'},value:{input:'draft'}});
+  return {finished:true,modelCalls:1,reason:'Saved'};
+ });
+ const runtime=f.runtime(actor),source=await runtime.execute(f.project,{accounts:[]},f.run,[],()=>{});
+ expect(source.results[0].run.verdict).toBe('passed');
+ const replay=await runtime.replay(f.project,{accounts:[]},source,join(f.root,'.private','snapshots',f.run.id,'sessions'));
+ expect(replay.results[0].run).toMatchObject({verdict:'passed',evidence:{modelCalls:0,replayCompatible:true}});
+ expect(replay.results[0].checks).toEqual(source.results[0].checks);
+ expect(actor).toHaveBeenCalledTimes(2);
 },20000);

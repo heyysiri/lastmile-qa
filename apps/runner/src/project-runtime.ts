@@ -128,7 +128,7 @@ export function createProjectRuntime(options:Options):ProjectRuntime&{replay:(pr
   const replayActions=async(actions:RecordedAction[])=>{
    for(const recorded of actions){
     const versioned=recorded.routeVersion===2,navigation=recorded.action.tool==='navigate';
-    if(!navigation)await session!.refreshObservation();
+    if(!navigation)await session!.refreshObservation('locator' in recorded.action ? recorded.action.locator : undefined);
     if(versioned||!navigation){
      const position=await session!.inspectReplayPosition(),current=versioned?position.url:new URL(session!.page.url()).pathname;
      if(recorded.urlBefore&&current!==recorded.urlBefore)throw new Error('Replay reached a different page before an action');
