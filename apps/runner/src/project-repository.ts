@@ -23,9 +23,10 @@ function launch(argv:string[],cwd:string,port:number){
  return {done,exited:()=>exited,async close(){kill('SIGTERM');await Promise.race([done,delay(500)]);kill('SIGKILL');await done;}};
 }
 type Transport={clone:typeof cloneRepository;sync:typeof syncRepository;publish:ReturnType<typeof createGitHubRepositoryClient>['publishVerifiedPatch']};
-type Options={root:string;token:string;transport?:Transport};
+type Options={root:string;token:string|(()=>string);transport?:Transport};
 export function createProjectRepository(options:Options):ProjectRepositoryRuntime {
- const transport=options.transport??{clone:cloneRepository,sync:syncRepository,publish:createGitHubRepositoryClient({token:options.token}).publishVerifiedPatch};
+ const getToken=()=>typeof options.token==='function'?options.token():options.token;
+ const transport=options.transport??{clone:cloneRepository,sync:syncRepository,publish:(input:Parameters<Transport['publish']>[0])=>createGitHubRepositoryClient({token:getToken()}).publishVerifiedPatch(input)};
  let active:{projectId:string;sha:string;appUrl:string;process:ReturnType<typeof launch>}|undefined;
  let operation:ReturnType<typeof launch>|undefined;const cancellation=new AbortController();
  async function stop(){const previous=active;active=undefined;if(previous)await previous.process.close();}
@@ -53,9 +54,9 @@ export function createProjectRepository(options:Options):ProjectRepositoryRuntim
    let sha:string;
    if(!await exists(directory)){
     if(mode==='resume')throw new Error('Managed checkout is missing; sync the project first');
-    onProgress('Cloning the selected GitHub branch');sha=await transport.clone({repositoryUrl:github.repositoryUrl,directory,branch:github.branch,token:options.token,signal:cancellation.signal});
+    onProgress('Cloning the selected GitHub branch');sha=await transport.clone({repositoryUrl:github.repositoryUrl,directory,branch:github.branch,token:getToken(),signal:cancellation.signal});
    }else if(mode==='sync'){
-    await stop();onProgress('Syncing the selected branch');sha=await transport.sync({repositoryUrl:github.repositoryUrl,directory,branch:github.branch,token:options.token,signal:cancellation.signal});
+    await stop();onProgress('Syncing the selected branch');sha=await transport.sync({repositoryUrl:github.repositoryUrl,directory,branch:github.branch,token:getToken(),signal:cancellation.signal});
    }else sha=await git(directory,['rev-parse','HEAD']);
    if(await git(directory,['status','--porcelain','--untracked-files=no']))throw new Error('Managed checkout has tracked source changes; restore its revision before testing');
    if(mode==='resume'&&sha!==github.sha)throw new Error('Managed revision no longer matches the frozen test revision; sync before testing');

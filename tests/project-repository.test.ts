@@ -24,3 +24,15 @@ it('restarts the same application origin after manager restart',async()=>{const 
 it('rejects tracked source edits instead of attributing them to the frozen commit',async()=>{const f=await fixture();const first=await f.manager.prepare(f.project,{accounts:[]},'connect',()=>{},[]);await writeFile(join(first.repositoryPath,'app.cjs'),'uncommitted source');await expect(f.manager.prepare({...f.project,...first},{accounts:[]},'resume',()=>{},[])).rejects.toThrow(/tracked|source|revision/i);});
 
 it('refuses an occupied saved port instead of testing another process',async()=>{const f=await fixture();const first=await f.manager.prepare(f.project,{accounts:[]},'connect',()=>{},[]);await f.manager.close?.();const foreign=createServer((_q,r)=>r.end('unrelated application'));await new Promise<void>(ok=>foreign.listen(Number(new URL(first.appUrl).port),'127.0.0.1',ok));const next=createProjectRepository({root:join(f.root,'managed'),token:'server-secret',transport:f.transport});managers.push(next);try{await expect(next.prepare({...f.project,...first},{accounts:[]},'resume',()=>{},[])).rejects.toThrow(/occupied|in use/i);}finally{await new Promise<void>(ok=>foreign.close(()=>ok()));}});
+
+it('uses the latest saved credential for clone and sync without recreating the manager',async()=>{
+ const f=await fixture();let token='first-token';const received:string[]=[];
+ const manager=createProjectRepository({root:join(f.root,'dynamic'),token:()=>token,transport:{...f.transport,
+  clone:async input=>{received.push(input.token);return f.transport.clone(input);},
+  sync:async input=>{received.push(input.token);return f.transport.sync(input);},
+ }});managers.push(manager);
+ const first=await manager.prepare(f.project,{accounts:[]},'connect',()=>{},[]);
+ token='replacement-token';
+ await manager.prepare({...f.project,...first},{accounts:[]},'sync',()=>{},[]);
+ expect(received).toEqual(['first-token','replacement-token']);
+});

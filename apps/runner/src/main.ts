@@ -13,6 +13,7 @@ import {createRepairRuntime} from './repair-runtime';
 import {createOscarRepairAdapter} from './repair-oscar';
 import {createProjectRuntime} from './project-runtime';
 import {createProjectRepository} from './project-repository';
+import {createGitHubCredentials} from './github-credentials';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 config({ path: resolve(root, '.env'), quiet: true });
@@ -40,9 +41,11 @@ try {
   ]};
   const journey = createJourneyExecutor({prepareSession:createPersistentSessionPreparer({origin,testToken}),origin,artifactRoot,testToken,apiKey,model});
   const projectRuntime=apiKey?createProjectRuntime({privateRoot:resolve(root,'.data/projects'),artifactRoot,apiKey,model}):undefined;
-  if(projectRuntime&&process.env.GITHUB_PAT)projectRuntime.repository=createProjectRepository({root:resolve(root,'.data/repositories'),token:process.env.GITHUB_PAT});
+  const githubCredentials=createGitHubCredentials({directory:resolve(root,'.data/credentials'),fallback:process.env.GITHUB_PAT});
+  if(projectRuntime)projectRuntime.repository=createProjectRepository({root:resolve(root,'.data/repositories'),token:githubCredentials.token});
   const app = createServer({
     projectRuntime,
+    githubCredentials,
     repairRuntime: apiKey ? createRepairRuntime({root:applicationRoot,workspaceRoot:resolve(root,'.data/repairs'),
       sellerDatabasePath:resolve(root,oscar?(process.env.OSCAR_DATABASE_PATH||'.data/oscar.sqlite'):(process.env.SELLER_DATABASE_PATH||'.data/seller-demo.sqlite')),
       artifactRoot,origin,testToken,apiKey,model,defect:oscar?process.env.OSCAR_DEMO_DEFECT:process.env.SELLER_DEMO_DEFECT},

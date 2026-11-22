@@ -6,6 +6,7 @@ import type { GenerateStudyRequestSchema, LaunchStudyRequestSchema, SaveStudyReq
 import type { infer as Infer } from 'zod';
 import type { ContextPack, ScenarioDefinition } from '@lastmile/contracts';
 
+export type GitHubCredentialStatus = { configured: boolean; source: 'saved' | 'environment' | 'none' };
 export type Health = { status: 'ok'; modelConfigured: boolean; executionReady: boolean; suggestionsReady?: boolean; repairsReady?: boolean; projectDiscoveryReady?: boolean; projectExecutionReady?: boolean; projectRepairsReady?: boolean };
 export type CapabilityInfo = { factor: string; mode?: string; description?: string; [k: string]: unknown };
 export class ApiFailure extends Error {
@@ -34,6 +35,8 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 }
 
 export const api = {
+  githubCredentials: () => call<GitHubCredentialStatus>('GET', 'settings/github'),
+  saveGitHubCredentials: (token: string) => call<GitHubCredentialStatus>('PUT', 'settings/github', { token }),
   projects: () => call<Project[]>('GET', 'projects'),
   project: (id: string) => call<ProjectDetail>('GET', `projects/${encodeURIComponent(id)}`),
   projectByRequest: (id: string) => call<Project>('GET', `projects/by-request/${encodeURIComponent(id)}`),

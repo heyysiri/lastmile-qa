@@ -4,6 +4,8 @@ Use a trusted development repository. This runner executes its install, build an
 
 ## Connect and run
 
+In **New project → GitHub → Setup**, **GitHub access** appears above Development accounts. Paste a personal access token and select **Save token**. It is validated with GitHub, stored encrypted for this installation, and reused for clone, sync and pull requests after a runner restart. Allow the selected repository with Contents and Pull requests read/write. Saving verifies the token identity; repository access is checked when used. A previously configured environment token remains a fallback until a token is saved here. The token is not part of project drafts, generated plans or browser storage. Development accounts are separate app logins and are unchanged.
+
 Open [lastmile qa.](http://127.0.0.1:3000), choose **New project**, and use:
 
 | Field | Value |
@@ -22,7 +24,7 @@ The runner clones the selected branch, installs and builds the native applicatio
 
 ## Follow the result
 
-The demo branch deliberately contains a product-name truncation regression. It is an explicitly seeded demonstration, not a claim that upstream Vendure has this defect.
+The original rehearsal used a deliberately seeded product-name truncation regression. If its repair PR has been merged, a healthy result on the latest branch is expected. This was an explicitly seeded demonstration, not a claim that upstream Vendure has this defect.
 
 1. Inspect the failing journey's expected and observed values. The product form can display only the first three characters of the stored name. Passing controls should retain their original expectations.
 2. When the run has complete failing evidence and passing controls, repair starts automatically. The runner reproduces the cases in a private application copy, proposes a patch, and verifies the same frozen checks without model calls during replay.

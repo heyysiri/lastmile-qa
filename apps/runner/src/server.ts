@@ -21,8 +21,10 @@ import { registerPopulationRoutes } from './population-routes';
 import { registerEvolutionRoutes } from './evolution-routes';
 import {registerProjectRoutes} from './project-routes';
 import type {ProjectRuntime} from '@lastmile/contracts/projects';
+import type { GitHubCredentials } from './github-credentials';
 
 export type ServerOptions = {
+  githubCredentials?: GitHubCredentials;
   projectRuntime?: ProjectRuntime;
   databasePath: string;
   apiToken?: string;
@@ -264,6 +266,17 @@ export function createServer(options: ServerOptions) {
     projectDiscoveryReady:Boolean(options.projectRuntime),projectExecutionReady:Boolean(options.projectRuntime),projectRepairsReady:Boolean(options.projectRuntime?.repair),
   }));
   app.get('/api/capabilities', async () => capabilities);
+  if (options.githubCredentials) {
+    const credentials = options.githubCredentials;
+    app.get('/api/settings/github', async (_request, reply) => {
+      reply.header('cache-control', 'no-store');
+      return credentials.status();
+    });
+    app.put('/api/settings/github', async (request, reply) => {
+      reply.header('cache-control', 'no-store');
+      return credentials.save((request.body as { token?: unknown } | null)?.token);
+    });
+  }
   registerProjectRoutes(app,store.projects,{startWorker,repairsReady:Boolean(options.projectRuntime?.repair),repositoryReady:Boolean(options.projectRuntime?.repository)});
   registerStudyRoutes(app, store.studies, {
     applications: options.applications ?? [],

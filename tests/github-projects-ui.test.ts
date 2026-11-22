@@ -158,7 +158,7 @@ describe('connection forms', () => {
     for (const label of ['Repository URL', 'Branch', 'Project name', 'Audience and intent']) expect(html).toContain(`<span>${label}</span>`);
     expect(html).toContain('https://github.com/owner/repo');
     expect(html).toContain('Connect from GitHub');
-    for (const forbidden of [/token/i, /personal access/i, /Repository path/, /Running app URL/]) expect(html).not.toMatch(forbidden);
+    for (const forbidden of [/Repository path/, /Running app URL/]) expect(html).not.toMatch(forbidden);
     expect(html).toMatch(/<details[^>]*class="project-disclosure"[^>]*>\s*<summary>Setup<\/summary>/);
     expect(html).toContain('Detected automatically');
     expect(html).toContain('name="entryPath"');

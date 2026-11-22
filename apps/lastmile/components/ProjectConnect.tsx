@@ -8,6 +8,7 @@ import { api, ApiFailure } from '../lib/api';
 import { newRequestId } from '../lib/editor';
 import { buildGitHubConnectRequest, connectWasRejected, projectHref, projectRequestId, repositoryLines } from '../lib/projects';
 import { StudioError } from './Studio';
+import { GitHubTokenSettings } from './GitHubTokenSettings';
 import { Dialog, DialogContent, DialogTrigger, Tabs, TabsContent, TabsList, TabsTrigger } from './primitives';
 
 type Kind = 'github' | 'local';
@@ -139,7 +140,7 @@ function FormShell({ session, ready, checkingHealth, submitLabel, resendLabel, b
   const { pendingId, canResend, busy, restored, error, draft } = session;
   return <form onSubmit={onSubmit} onChange={event => {
     const input = event.target;
-    if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) draft.current[input.name] = input.value;
+    if ((input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) && input.name) draft.current[input.name] = input.value;
   }} onInvalidCapture={event => {
     const disclosure = (event.target as HTMLElement).closest('details');
     if (disclosure) disclosure.open = true;
@@ -223,6 +224,7 @@ export function GitHubConnectForm(props: FormProps) {
             <label className="field"><span>Working directory (optional)</span><input name="cwd" defaultValue={draft.current.cwd ?? ''} placeholder="Repository-relative path" /></label>
           </div>
         </>}
+        <GitHubTokenSettings />
         <AccountFields session={session} />
       </div>
     </details>

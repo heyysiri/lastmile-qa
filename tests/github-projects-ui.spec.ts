@@ -88,6 +88,7 @@ async function mockApi(page: Page, initial?: ProjectDetail) {
     const respond = (json: unknown, status = 200) => route.fulfill({ json, status });
     const missing = () => respond({ code: 'not_found', message: 'No matching request.' }, 404);
     if (path === 'health') return respond(health);
+    if (path === 'settings/github') return respond({ configured: true, source: 'environment' });
     if (path === 'projects' && method === 'GET') return respond(project ? [project] : []);
     if (path === 'projects/github' && method === 'POST') {
       const input = request.postDataJSON() as ConnectGitHubProjectRequest;
@@ -193,7 +194,7 @@ for (const width of [375, 1440]) {
     await expect(dialog.getByLabel('Repository path')).toHaveCount(0);
     await expect(dialog.getByLabel('Running app URL')).toHaveCount(0);
     await expect(dialog.getByLabel('Starting page')).toBeHidden();
-    await expect(dialog.getByText(/token|password/i)).toHaveCount(0);
+    await expect(dialog.getByLabel('GitHub personal access token')).toBeHidden();
     await expectNoOverflow(page);
     await dialog.getByRole('button', { name: 'Connect from GitHub' }).click();
     await expect(page).toHaveURL(/\/projects\/desk$/);
@@ -328,3 +329,50 @@ test('retries a failed publish as Retry PR with one idempotent request and no ne
 });
 
 test('retries failed initial GitHub setup through discovery rather than release sync',async({page})=>{const mock=await mockApi(page,githubProject({status:'failed'}));await page.goto('/projects/desk');await page.getByRole('button',{name:'Retry setup'}).click();await expect.poll(()=>mock.refreshes.length).toBe(1);expect(mock.syncs).toHaveLength(0);await expect(page.getByText('Preparing the repository',{exact:true})).toBeVisible();});
+
+test('saves a masked GitHub PAT separately and never retains it in connection drafts or browser storage', async ({ page }) => {
+  const mock = await mockApi(page);
+  let configured = false; const saves: unknown[] = [];
+  await page.route('**/api/runner/settings/github', async route => {
+    if (route.request().method() === 'PUT') { saves.push(route.request().postDataJSON()); configured = true; }
+    await route.fulfill({ json: { configured, source: configured ? 'saved' : 'none' } });
+  });
+  await page.goto('/'); const dialog = await fillGitHub(page);
+  await dialog.getByText('Setup', { exact: true }).click();
+  const token = dialog.getByLabel('GitHub personal access token');
+  await expect(token).toHaveAttribute('type', 'password');
+  await token.fill('github_pat_browser_fixture');
+  await dialog.getByRole('button', { name: 'Save token', exact: true }).click();
+  await expect(dialog.getByText('GitHub token saved for this installation.')).toBeVisible();
+  await expect(token).toHaveValue('');
+  expect(saves).toEqual([{ token: 'github_pat_browser_fixture' }]);
+  expect(mock.connects).toHaveLength(0);
+  await dialog.getByRole('button', { name: 'Add development account' }).click();
+  await expect(dialog.getByLabel('Role or label')).toBeVisible();
+  await dialog.getByRole('button', { name: 'Remove last account' }).click();
+  await token.fill('unsaved_secret');
+  await dialog.getByRole('tab', { name: 'Local development' }).click();
+  await dialog.getByRole('tab', { name: 'GitHub' }).click();
+  await dialog.getByText('Setup', { exact: true }).click();
+  await expect(dialog.getByLabel('GitHub personal access token')).toHaveValue('');
+  const stored = await page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }));
+  expect(stored).not.toContain('github_pat_browser_fixture'); expect(stored).not.toContain('unsaved_secret');
+  await dialog.getByRole('button', { name: 'Connect from GitHub' }).click();
+  await expect(page).toHaveURL(/\/projects\/desk$/);
+  expect(JSON.stringify(mock.connects)).not.toContain('secret'); expect(JSON.stringify(mock.connects)).not.toContain('github_pat');
+});
+
+test('keeps an invalid PAT error beside the field without submitting the project', async ({ page }) => {
+  const mock = await mockApi(page);
+  await page.route('**/api/runner/settings/github', route => route.fulfill({
+    status: route.request().method() === 'PUT' ? 400 : 200,
+    json: route.request().method() === 'PUT' ? { code: 'github_auth', message: 'GitHub rejected this token.' } : { configured: true, source: 'environment' },
+  }));
+  await page.goto('/'); const dialog = await fillGitHub(page);
+  await dialog.getByText('Setup', { exact: true }).click();
+  await expect(dialog.getByText('GitHub access is already configured on the server.')).toBeVisible();
+  await dialog.getByLabel('GitHub personal access token').fill('invalid_fixture_token');
+  await dialog.getByRole('button', { name: 'Replace token', exact: true }).click();
+  await expect(dialog.getByText('GitHub rejected this token.')).toBeVisible();
+  expect(mock.connects).toHaveLength(0);
+});
