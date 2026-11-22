@@ -83,7 +83,7 @@ export function ProjectHome({ id }: { id: string }) {
       disabled={!refresh.ready || requestInFlight || Boolean(write.pending) || Boolean(sync.pending) || detail.loading || Boolean(detail.error) || (!refresh.pending && !canRefresh)}
       onClick={() => void refresh.submit({ requestId: newRequestId() })}>
       <RotateCw size={15} aria-hidden="true" />
-      {refresh.busy ? 'Refreshing…' : refresh.pending ? 'Recover refresh request' : 'Refresh understanding'}
+      {refresh.busy ? 'Refreshing…' : refresh.pending ? 'Recover refresh request' : github && project?.status === 'failed' ? 'Retry setup' : 'Refresh understanding'}
     </button>;
   }
 
@@ -101,7 +101,7 @@ export function ProjectHome({ id }: { id: string }) {
       {project.status === 'failed' && <div className="project-progress">
         <h2>Discovery needs attention</h2>
         <p>{project.error || project.progress || 'Discovery ended before the project was ready.'}</p>
-        {github ? !sync.pending && syncButton(false, false) : !refresh.pending && refreshButton()}
+        {!refresh.pending && refreshButton()}
       </div>}
       {active && <TeamProgress run={active} />}
       {(write.pending && !accepted || refresh.pending || sync.pending) && <div className="project-progress">

@@ -79,6 +79,7 @@ async function mockApi(page: Page, initial?: ProjectDetail) {
   const publishes: string[] = [];
   const runs: unknown[] = [];
   const repairWrites: unknown[] = [];
+  const refreshes: unknown[] = [];
   await page.route('**/api/runner/**', async route => {
     const request = route.request();
     expect(request.headers()).not.toHaveProperty('authorization');
@@ -102,6 +103,7 @@ async function mockApi(page: Page, initial?: ProjectDetail) {
     if (path.startsWith('projects/by-request/')) return path.endsWith(connectId ?? '\0') && project ? respond(project) : missing();
     if (!project) return missing();
     if (path === 'projects/desk') return respond(project);
+    if (path === 'projects/desk/refresh') {refreshes.push(request.postDataJSON());project={...project,status:'discovering',progress:'Preparing the repository'};return respond(project,202);}
     if (path === 'projects/desk/sync') {
       const input = request.postDataJSON() as SyncGitHubProjectRequest;
       if (!syncs.some(item => item.requestId === input.requestId)) {
@@ -137,7 +139,7 @@ async function mockApi(page: Page, initial?: ProjectDetail) {
     return missing();
   });
   return {
-    health, flags, connects, localConnects, syncs, publishes, runs, repairWrites,
+    health, flags, connects, localConnects, syncs, publishes, runs, repairWrites, refreshes,
     ready() { if (project) project = { ...githubProject(), runs: project.runs, repairs: project.repairs }; },
     finishFirstRun() {
       if (!project) throw new Error('A project must exist first');
@@ -324,3 +326,5 @@ test('retries a failed publish as Retry PR with one idempotent request and no ne
   await expect(page.getByRole('link', { name: 'Review pull request' })).toHaveAttribute('href', pullRequest.url);
   expect(mock.repairWrites).toHaveLength(0);
 });
+
+test('retries failed initial GitHub setup through discovery rather than release sync',async({page})=>{const mock=await mockApi(page,githubProject({status:'failed'}));await page.goto('/projects/desk');await page.getByRole('button',{name:'Retry setup'}).click();await expect.poll(()=>mock.refreshes.length).toBe(1);expect(mock.syncs).toHaveLength(0);await expect(page.getByText('Preparing the repository',{exact:true})).toBeVisible();});

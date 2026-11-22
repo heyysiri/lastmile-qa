@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
@@ -71,4 +71,21 @@ test('refuses runtime files already in the Git index', () => {
     writeFileSync(join(workspace, 'local-marketplace/server.ts'), '// tracked');
     execFileSync('git', ['add', 'local-marketplace'], { cwd: workspace });
     expect(() => prepareVendureRecipe({ workspace })).toThrow(/untracked runtime state/);
+});
+
+test('keeps SQLite separate and packages assets as a regular private runtime file',()=>{
+ const workspace=checkout();const recipe=prepareVendureRecipe({workspace});
+ expect(recipe.runtimeFiles).not.toContain(recipe.databasePath);
+ expect(recipe.runtimeFiles).toEqual([join(recipe.workingDirectory,'.data/credentials.json'),join(recipe.workingDirectory,'.data/assets.tar')]);
+ expect(recipe.buildCommand).toContain('tar -xf .data/assets.tar -C .data');
+ expect(recipe.buildCommand).toContain('tar -cf .data/assets.tar -C .data assets');
+});
+
+test('restores native asset bytes in a private build without archiving credentials or SQLite',()=>{
+ const workspace=checkout();const recipe=prepareVendureRecipe({workspace});const data=join(recipe.workingDirectory,'.data');
+ mkdirSync(join(data,'assets'),{recursive:true});writeFileSync(join(data,'assets','fixture.bin'),Buffer.from([0,255,17,3]));writeFileSync(recipe.databasePath,'private database');
+ const bin=join(workspace,'fake-bin');mkdirSync(bin);writeFileSync(join(bin,'npm'),'#!/bin/sh\nexit 0\n');chmodSync(join(bin,'npm'),0o700);
+ const run=()=>execFileSync('/bin/sh',['-c',recipe.buildCommand],{cwd:recipe.workingDirectory,env:{...process.env,PATH:bin+':'+process.env.PATH}});run();
+ const entries=execFileSync('tar',['-tf',join(data,'assets.tar')],{encoding:'utf8'});expect(entries).toContain('assets/fixture.bin');expect(entries).not.toMatch(/credentials|sqlite/);
+ rmSync(join(data,'assets'),{recursive:true});run();expect(readFileSync(join(data,'assets','fixture.bin'))).toEqual(Buffer.from([0,255,17,3]));expect(readFileSync(recipe.databasePath,'utf8')).toBe('private database');
 });

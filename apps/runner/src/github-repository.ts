@@ -108,7 +108,7 @@ const repoRef = z.object({ full_name: z.string() }).nullable();
 const PullSchema = z.object({
   html_url: z.string(), number: z.number().int().positive(), state: z.string(),
   head: z.object({ ref: z.string(), sha: Sha, repo: repoRef }),
-  base: z.object({ ref: z.string(), repo: repoRef }),
+  base: z.object({ ref: z.string(), sha: Sha, repo: repoRef }),
 });
 type Pull = z.infer<typeof PullSchema>;
 
@@ -239,6 +239,7 @@ export function createGitHubRepositoryClient({ token, apiOrigin = defaultApiOrig
     const existing = await findPull(repo, branch, input.baseBranch, signal);
     const ref = await readRef(repo, branch, signal);
     if (existing) {
+      if (existing.state === 'open' && existing.base.sha !== baseSha) throw new GitHubTransportError('stale_base', 'The open pull request base moved since verification; sync and test the new revision');
       if (existing.state === 'open' && ref?.sha !== existing.head.sha) throw new GitHubTransportError('branch_diverged', 'The repair branch no longer matches its pull request; refusing to overwrite it');
       await verifyBranchCommit(repo, baseSha, existing.head.sha, changes, signal);
       return pullResult(repo, existing, branch, existing.head.sha, baseSha);
@@ -295,10 +296,12 @@ export function createGitHubRepositoryClient({ token, apiOrigin = defaultApiOrig
       } else headSha = commit.sha;
     }
 
+    if ((await readRef(repo, input.baseBranch, signal))?.sha !== baseSha) throw new GitHubTransportError('stale_base', 'The base branch moved during publication; sync and test the new revision');
     const pullBody = { title: input.title.trim(), head: branch, base: input.baseBranch, body: input.body, maintainer_can_modify: false };
     const created = await call('POST', `${target(repo)}/pulls`, { body: pullBody, allow: [422], signal });
     const pull = created.status === 422 ? await findPull(repo, branch, input.baseBranch, signal) : parse(PullSchema, created.data, 'pull request');
     if (!pull) throw new GitHubTransportError('api_error', 'GitHub rejected the pull request');
+    if (pull.base.ref !== input.baseBranch || pull.base.sha !== baseSha) throw new GitHubTransportError('stale_base', 'The pull request base differs from the verified revision');
     if (pull.head.sha !== headSha) throw new GitHubTransportError('branch_diverged', 'The pull request head does not match the verified commit');
     return pullResult(repo, pull, branch, headSha, baseSha);
   }

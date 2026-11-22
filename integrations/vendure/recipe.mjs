@@ -42,10 +42,10 @@ export function prepareVendureRecipe({ workspace, port }) {
     return {
         workingDirectory,
         installCommand: `${node22} npm --prefix .. ci --ignore-scripts --no-audit --no-fund && ${node22} npm --prefix .. rebuild bcrypt better-sqlite3`,
-        buildCommand: `${node22} npm run build && ${node22} npm run seed`,
+        buildCommand: `if test -f .data/assets.tar; then tar -xf .data/assets.tar -C .data; fi && ${node22} npm run build && ${node22} npm run seed && tar -cf .data/assets.tar -C .data assets`,
         startCommand: `PORT=${port ?? '{port}'} ${node22} npm run start`,
         ...(port === undefined ? {} : { port }),
         databasePath,
-        runtimeFiles: [credentials, databasePath, resolve(data, 'assets')],
+        runtimeFiles: [credentials, resolve(data, 'assets.tar')],
     };
 }

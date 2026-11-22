@@ -27,7 +27,7 @@ type BrainOptions = {
 };
 
 const modelLimit = 18;
-const discoveryMs = 120_000;
+const discoveryMs = 300_000;
 const routeLimit = 12;
 const sourceToolLimit = 20;
 const citations = (max: number) => z.array(z.string().regex(/^S[1-9]\d*$/)).min(1).max(max);

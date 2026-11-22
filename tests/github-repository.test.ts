@@ -114,7 +114,7 @@ class FakeGitHub {
     const repo = { full_name: 'heyysiri/vendure' };
     return {
       html_url: `https://github.com/heyysiri/vendure/pull/${pull.number}`, number: pull.number, state: pull.state,
-      head: { ref: pull.head, sha: pull.sha, repo }, base: { ref: pull.base, repo },
+      head: { ref: pull.head, sha: pull.sha, repo }, base: { ref: pull.base, sha: this.refs.get(`refs/heads/${pull.base}`) ?? this.tip(), repo },
     };
   }
   async handle(req: IncomingMessage, res: ServerResponse) {
@@ -303,9 +303,9 @@ describe('publishVerifiedPatch', () => {
     expect(await client.publishVerifiedPatch(publishInput())).toEqual(first);
     expect(fake.writes().length).toBe(writes);
     expect(fake.pulls).toHaveLength(1);
-    // Even after the base branch has moved on, the existing PR is still the answer.
+    // An open PR against an advanced base must not retain a stale verified label.
     fake.advance('main', 'README.md', '# moved\n');
-    expect(await client.publishVerifiedPatch(publishInput(appPatch(), { baseSha: first.baseSha }))).toEqual(first);
+    await expectCode(client.publishVerifiedPatch(publishInput(appPatch(), { baseSha: first.baseSha })), 'stale_base');
   });
 
   it('recovers after a crash between pushing the branch and opening the PR without creating a second commit', async () => {

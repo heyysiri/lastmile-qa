@@ -1,6 +1,6 @@
 # lastmile qa.
 
-Persistent AI test users for applications in development. Connect your repository, running app and audience intent. LastMile reads relevant source, observes the UI, generates a test team and checks what actually persists. On later releases, it retains the team's identities, history and requirement-backed expectations.
+Persistent AI test users for applications in development. Connect a GitHub repository, branch and audience intent, or an existing local development app. LastMile reads relevant source, observes the UI, generates a test team and checks what actually persists. On later releases, it retains the team's identities, history and requirement-backed expectations.
 
 ## Run locally
 
@@ -15,17 +15,17 @@ Open [LastMile](http://127.0.0.1:3000). The runner defaults to port 4000. Stop a
 
 ## Main flow
 
-1. **New project → Connect a project:** provide its local repository path, running development URL and a plain-language description of the users and work to test. Add requirements and native development accounts where needed. The runner must be able to read that repository and reach the app.
+1. **New project → GitHub:** provide the repository URL, branch and a plain-language description of the users and work to test. Add `GITHUB_PAT` to the runner’s `.env` once. Vendure setup automatically clones, installs, builds, starts and provisions native development accounts. Other trusted repositories use custom install/build/start commands. **Local development** remains available for an existing repository and running app.
 2. **Run test team:** the model generates tasks from source and observed UI. Separate browsers use the supplied accounts. Independent checks reopen pages and compare saved values or preserved state. Expand evidence to see expected versus observed results.
-3. **Test changes:** rebuild your application, then revisit it with the same team. Original checks stay frozen; additional coverage may be proposed. Changed requirements or implementation-derived assumptions can require fresh evidence.
+3. **Sync & test:** fetch the selected GitHub branch and rebuild while preserving native development data and tester profiles. Original checks remain frozen. A merged verified fix reuses coverage; other source changes can add journeys. Local projects use **Test changes** after rebuilding their app.
 4. **Automatic fix and verification:** when a run has a conclusive failure and a passing control, the runner reproduces the behavior privately, proposes a source patch, and replays the frozen cases without another click. Private verification needs the application build/start commands and any supported database snapshot configured at connection time. Replay makes zero model calls.
-5. **Review the result:** inspect expected versus observed values, the patch, and its verification outcome. Incomplete evidence or an unsupported setup is reported explicitly. Verified patches stay in private copies; they are not automatically applied, merged or deployed.
+5. **Review the result:** inspect expected versus observed values, the patch, and its verification outcome. Incomplete evidence or an unsupported setup is reported explicitly. For GitHub projects, independently verified patches automatically become a pull request against the tested revision. Merge on GitHub manually, then use Sync & test. No automatic merge or deployment. Local-project patches remain in private copies.
 
-Credentials and browser session state stay server-side. Account-bearing sessions suppress screenshots; redacted steps and check results remain available. Source-derived expectations are labeled separately from requirements. Synthetic testers provide software test coverage, not measured human behavior or proof of accessibility compliance.
+This local runner executes trusted repositories under your operating-system account; it is not a security sandbox for untrusted repositories. Credentials and browser session state stay server-side. Account-bearing sessions suppress screenshots; redacted steps and check results remain available. Source-derived expectations are labeled separately from requirements. Synthetic testers provide software test coverage, not measured human behavior or proof of accessibility compliance.
 
 ## Substantial application benchmark
 
-The local benchmark uses native Vendure v3.5.0, pinned to `534e6003534f74761e82de1b8c6061cba89945d1`. Core plus React dashboard comprise 143,870 physical source lines across 1,332 files, excluding tests, dependencies and generated output. Indexing this repository does not mean every workflow is tested.
+The local benchmark uses native Vendure v3.5.0, pinned to `534e6003534f74761e82de1b8c6061cba89945d1`. Core plus React dashboard comprise 134,726 physical source lines across 1,211 files, excluding tests, dependencies and generated output. Indexing this repository does not mean every workflow is tested.
 
 See [Vendure setup](integrations/vendure/README.md). Setup is `node scripts/setup-vendure.mjs`; the native dashboard runs at [port 9005](http://127.0.0.1:9005/dashboard/). It uses ordinary staff accounts and application pages, with no LastMile workflow adapter or test endpoint.
 
@@ -42,7 +42,9 @@ flowchart LR
  E --> F[Findings and passing controls]
  F --> G[Private coding patch]
  G --> H[Zero-model replay]
- H --> I[Reviewable verified fix]
+ H --> I[Verified fix PR]
+ I --> J[Manual merge]
+ J --> K[Sync and retest retained users]
 ```
 
 The Next.js dashboard proxies authenticated requests to the runner. SQLite stores projects and durable jobs. Strands runs bounded browser actors. Authentication, precondition capture and browser journeys run serially against shared development data, matching repair replay and limiting memory use.

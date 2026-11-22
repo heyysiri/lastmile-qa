@@ -13,6 +13,7 @@ const exec=promisify(execFile);
 const git=async(root:string,args:string[])=>(await exec('git',['-C',root,...args],{timeout:30000,maxBuffer:2_000_000})).stdout.trim();
 const exists=async(path:string)=>stat(path).then(()=>true,()=>false);
 async function freePort(){const server=createServer();return new Promise<number>((ok,fail)=>{server.once('error',fail);server.listen(0,'127.0.0.1',()=>{const address=server.address();server.close(error=>error||!address||typeof address==='string'?fail(error??new Error('Port unavailable')):ok(address.port));});});}
+async function assertPortFree(port:number){const server=createServer();await new Promise<void>((ok,fail)=>{server.once('error',()=>fail(new Error('Managed application port is occupied. Stop the previous application instance and retry.')));server.listen(port,'127.0.0.1',()=>server.close(error=>error?fail(error):ok()));});}
 function launch(argv:string[],cwd:string,port:number){
  const {PATH,HOME,TMPDIR,TMP,TEMP,CI,LANG,LC_ALL,TZ}=process.env;
  const [command,...args]=argv.map(arg=>arg.replaceAll('{port}',String(port)));
@@ -55,6 +56,7 @@ export function createProjectRepository(options:Options):ProjectRepositoryRuntim
    }else if(mode==='sync'){
     await stop();onProgress('Syncing the selected branch');sha=await transport.sync({repositoryUrl:github.repositoryUrl,directory,branch:github.branch,token:options.token,signal:cancellation.signal});
    }else sha=await git(directory,['rev-parse','HEAD']);
+   if(await git(directory,['status','--porcelain','--untracked-files=no']))throw new Error('Managed checkout has tracked source changes; restore its revision before testing');
    if(mode==='resume'&&sha!==github.sha)throw new Error('Managed revision no longer matches the frozen test revision; sync before testing');
    let commands=project.commands,install=github.install,accounts=secrets.accounts,entryPath=github.entryPath;
    if(github.setup==='auto'){
@@ -88,8 +90,10 @@ export function createProjectRepository(options:Options):ProjectRepositoryRuntim
        if(await readFile(installPath,'utf8').catch(()=>'')!==installHash||!await exists(join(directory,'node_modules'))){onProgress('Installing application dependencies');await command(install,cwd,port,'Dependency installation');await writeFile(installPath,installHash,{mode:0o600});}
       }
       if(commands.build){onProgress('Building the application and preparing development data');await command(commands.build,cwd,port,'Application build');}
+      if(await git(directory,['status','--porcelain','--untracked-files=no']))throw new Error('Application build changed tracked source; revision cannot be verified');
       await writeFile(metadata,configuration,{mode:0o600});
      }
+     await assertPortFree(port);
      onProgress('Starting the managed application');const child=launch(commands.start,cwd,port);active={projectId:project.id,sha,appUrl:`http://127.0.0.1:${port}${entryPath}`,process:child};appUrl=active.appUrl;
      const deadline=Date.now()+120000;let ready=false;
      while(Date.now()<deadline&&!child.exited()){
@@ -106,7 +110,7 @@ export function createProjectRepository(options:Options):ProjectRepositoryRuntim
    const checks=compareProjectReplayResults(repair.sourceRun,repair.verification.results);
    if(!checks.length||checks.some(check=>check.after.status!=='passed'))throw new Error('Verified replay evidence is incomplete');
    const github=repair.project.github;
-   return transport.publish({repositoryUrl:github.repositoryUrl,baseBranch:github.branch,baseSha:repair.sourceRun.revision,repairId:repair.id,patch:repair.patch,title:`Fix: ${repair.patch.summary.slice(0,120)}`,body:`${repair.patch.summary}\n\nVerified by lastmile qa. against commit ${repair.sourceRun.revision}.\n\nAll ${repair.verification.results.length} frozen journeys passed independent checks using zero-model replay. Patch hash: ${repair.patch.hash}.\n\nReview and merge manually, then Sync & test to run the retained users again.`});
+   return transport.publish({repositoryUrl:github.repositoryUrl,baseBranch:github.branch,baseSha:repair.sourceRun.revision,repairId:repair.id,patch:repair.patch,title:`Fix: ${repair.patch.summary.replace(/\s+/g,' ').slice(0,120)}`,body:`${repair.patch.summary}\n\nVerified by lastmile qa. against commit ${repair.sourceRun.revision}.\n\nAll ${repair.verification.results.length} frozen journeys passed independent checks using zero-model replay. Patch hash: ${repair.patch.hash}.\n\nReview and merge manually, then Sync & test to run the retained users again.`});
   },
   async close(){cancellation.abort();await operation?.close();await stop();},
  };

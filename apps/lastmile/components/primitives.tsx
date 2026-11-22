@@ -32,7 +32,7 @@ export function DialogContent({ title, description, children }: {
 
 export const Tabs = TabsPrimitive.Root;
 export function TabsList({ children, label = 'Project workspace' }: { children: ReactNode; label?: string }) {
-  return <TabsPrimitive.List className="workspace-tabs" aria-label={label}>{children}</TabsPrimitive.List>;
+  return <TabsPrimitive.List className="workspace-tabs" aria-label={label} tabIndex={-1}>{children}</TabsPrimitive.List>;
 }
 export function TabsTrigger(props: ComponentProps<typeof TabsPrimitive.Trigger>) {
   return <TabsPrimitive.Trigger {...props} className="workspace-tab" />;
