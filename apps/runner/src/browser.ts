@@ -533,8 +533,9 @@ export async function createBrowserSession(options: BrowserSessionOptions): Prom
           before = page.url().startsWith('chrome-error:') ? { url: routeIdentity('about:blank'), focus: 'none' } : await inspectReplayPosition();
           await dispatch(action, timing());
         }
-        // Give UI updates a brief window, extending it for pending delayed requests.
-        const settleUntil = Math.min(end - 400, performance.now() + (profile.mode === 'request_delay' ? profile.delayMs : profile.mode === 'throttled' ? profile.latencyMs : 0) + 450);
+        // Let navigation/observation finish pending page data within their existing budget.
+        // Mutations retain a short settle window; none of these waits extend the journey cap.
+        const settleUntil = !action || action.tool === 'navigate' ? end - 400 : Math.min(end - 400, performance.now() + (profile.mode === 'request_delay' ? profile.delayMs : profile.mode === 'throttled' ? profile.latencyMs : 0) + 450);
         do {
           if (performance.now() + 100 > settleUntil) break;
           await delay(100, undefined, { signal: stepSignal });

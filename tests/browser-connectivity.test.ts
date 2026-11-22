@@ -158,6 +158,11 @@ describe('connectivity [chromium]', () => {
     offsite = await listen(other);
     app = createServer(async (request, response) => {
       const url = new URL(request.url ?? '/', 'http://local');
+      if (url.pathname === '/hydrating') return response.writeHead(200, { 'content-type': 'text/html' }).end('<main>Loading</main><script>fetch("/form-data").then(r=>r.text()).then(html=>document.querySelector("main").innerHTML=html)</script>');
+      if (url.pathname === '/form-data') {
+        await new Promise(resolve => setTimeout(resolve, 1400));
+        return response.end('<label>Stock<input name="stock"></label>');
+      }
       if (url.pathname === '/ping') { hits.ping++; return response.writeHead(200, { 'cache-control': 'no-store' }).end('pong'); }
       if (url.pathname === '/large-page') {
         return response.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store' })
@@ -201,6 +206,14 @@ describe('connectivity [chromium]', () => {
     });
     return session;
   }
+  it('lets a pending form request finish before reporting the navigation observation', async () => {
+    const browser = await open();
+    const observed = await browser.execute({tool:'navigate',path:'/hydrating'});
+    expect(observed).toContain('fieldName "stock"');
+    await browser.execute({tool:'fill',locator:{by:'fieldName',value:'stock'},value:{literal:'97'}});
+    expect(await browser.page.locator('[name="stock"]').inputValue()).toBe('97');
+  });
+
   type Timed = { ok: boolean; ms: number; bytes?: number; error?: string };
   /** Fetch from inside the page so the request travels through the real Chromium network stack. */
   const timed = (browser: BrowserSession, target: string, init: { method?: string; body?: string } = {}) => browser.page.evaluate(async ([path, request]) => {
