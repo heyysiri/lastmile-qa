@@ -112,14 +112,14 @@ it('returns the observed redirect destination when a requested route is read fro
   expect(observe.mock.calls.filter(([, , paths]) => paths.includes('/workspace'))).toHaveLength(1);
 });
 
-type PlanChange = 'role' | 'path' | 'hash' | 'excerpt' | 'unread' | 'unknown-citation' | 'account' | 'reuse' | 'route' | 'selector' | 'route-selector' | 'auto-observe'
+type PlanChange = 'docs-only' | 'role' | 'path' | 'hash' | 'excerpt' | 'unread' | 'unknown-citation' | 'account' | 'reuse' | 'route' | 'selector' | 'route-selector' | 'auto-observe'
   | 'field-name' | 'field-name-duplicate' | 'field-name-unobserved' | 'unlinked-label' | 'missing-expected' | 'ambiguous-text'
   | 'basis' | 'identity' | 'multiple' | 'source-goal' | 'source-persona' | 'source-input' | 'oracle-goal' | 'oracle-input';
 
 type DraftFixture = { testers: Array<{ id: string; name: string; role: string; summary: string; selectionReason?: string; accountId?: string; context: ReturnType<typeof behavior> }>; journeys: Array<{ id: string; testerId: string; goal: string; stages?: Array<{ id: string; label: string; goal: string; transition: string; entryPath?: string }>; checks: Array<{ id: string; atStageStart?: string }> }> };
 
 async function setup(route: string, label: string, change?: PlanChange, entryText = '', transform?: (plan: DraftFixture) => void) {
-  await writeFile(join(fixture, 'station.py'), `from tides import station\nroute = "${route}"\nlabel = "${label}"\n`);
+  await writeFile(join(fixture, change === 'docs-only' ? 'station.md' : 'station.py'), `from tides import station\nroute = "${route}"\nlabel = "${label}"\n`);
   await writeFile(join(fixture, 'unread.py'), 'protected = "Not looked up"\n');
   const observe = vi.fn(async (_project: Project, _secrets: ProjectSecrets, paths: string[]) => paths
     .filter(path => path === route || path === new URL(project.appUrl).pathname).map(path => ({
@@ -279,7 +279,12 @@ describe('repository brain', () => {
     expect(test.observe).toHaveBeenCalledWith(project, secrets, ['/chart-cabinet']);
     expect(discovery.observations).toEqual(expect.arrayContaining([expect.objectContaining({ path: '/chart-cabinet', accountId })]));
   });
+  it('rejects a write journey backed only by documentation so repair has implementation evidence', async () => {
+    await expect((await setup('/chart-cabinet', 'High tide', 'docs-only')).run()).rejects.toThrow(/implementation citation/);
+  });
+
   it.each([
+    ...[
     { scenario: 'a conflicting guest check', control: 'Station name', expected: 'East station', accounts: false, reuse: false, entryRead: false, rejects: true },
     { scenario: 'an uncaptured conflicting guest check', control: 'Station name', expected: undefined, accounts: false, reuse: false, entryRead: false, rejects: true },
     { scenario: 'a guest check on an untouched field', control: 'Calibration', expected: '10', accounts: false, reuse: false, entryRead: false, rejects: false },
@@ -287,7 +292,11 @@ describe('repository brain', () => {
     { scenario: 'a stage-entry read on a shared account', control: 'Station name', expected: undefined, accounts: true, reuse: true, entryRead: true, rejects: false },
     { scenario: 'a conflicting reused account check', control: 'Station name', expected: undefined, accounts: true, reuse: true, entryRead: false, rejects: true },
     { scenario: 'an untouched reused account check', control: 'Calibration', expected: '10', accounts: true, reuse: true, entryRead: false, rejects: false },
-  ])('handles $scenario when a prior journey plans a write', async ({ control, expected, accounts, reuse, entryRead, rejects }) => {
+    ].map(item => ({ ...item, fixedRead: false, returnCheck: false })),
+    { scenario: 'a stale fixed read after a return-stage write', control: 'Station name', expected: 'East station', accounts: true, reuse: true, entryRead: false, rejects: true, fixedRead: true, returnCheck: true },
+    { scenario: 'a matching fixed read after a return-stage write', control: 'Station name', expected: 'East Annex', accounts: true, reuse: true, entryRead: false, rejects: false, fixedRead: true, returnCheck: true },
+    { scenario: 'an untouched fixed read after a return-stage write', control: 'Calibration', expected: '10', accounts: true, reuse: true, entryRead: false, rejects: false, fixedRead: true, returnCheck: true },
+  ])('handles $scenario when a prior journey plans a write', async ({ control, expected, accounts, reuse, entryRead, rejects, fixedRead, returnCheck }) => {
     const path = '/station';
     await writeFile(join(fixture, 'station.py'), 'route = "/station"\nname = "Station name"\ncalibration = "Calibration"\nthreshold = "Alarm threshold"\n');
     project.accounts = accounts ? [{ id: 'editor', label: 'Editor' }, { id: 'operator', label: 'Operator' }] : [];
@@ -307,12 +316,12 @@ describe('repository brain', () => {
       const journeys = [
         { id: 'rename', testerId: 'editor', title: 'Rename the station', goal: 'Save a new station name.', entryPath: path,
           inputs: { name: 'East Annex' },
-          ...(entryRead ? { stages: [{ id: 'return', label: 'Review', goal: 'Review station settings.', transition: 'continue' }] } : {}),
-          checks: [{ ...field('saved-name', 'Saved station name', 'Station name', 'after_reload', 'East Annex'), ...(entryRead ? { atStageStart: 'return' } : {}) }],
+          ...(returnCheck ? { stages: [{ id: 'save', label: 'Save', goal: 'Save the station name.', transition: 'continue' }, { id: 'return', label: 'Return', goal: 'Review the saved station.', transition: 'reopen', entryPath: path }] } : entryRead ? { stages: [{ id: 'return', label: 'Review', goal: 'Review station settings.', transition: 'continue' }] } : {}),
+          checks: [{ ...field('saved-name', 'Saved station name', 'Station name', 'after_reload', 'East Annex'), ...(returnCheck ? { atStageStart: 'return', phase: 'after_action', path: undefined } : entryRead ? { atStageStart: 'return' } : {}) }],
           reason: 'Staff can update station names.', sources },
         { id: 'adjust', testerId: 'operator', title: 'Adjust the alarm', goal: 'Save a new alarm threshold.', entryPath: path,
           inputs: { threshold: '6' }, checks: [field('saved-threshold', 'Saved threshold', 'Alarm threshold', 'after_reload', '6'),
-            field('preserved', 'Preserved setting', control, 'preserve', expected)], reason: 'Staff can adjust alarm thresholds.', sources },
+            field('preserved', 'Preserved setting', control, fixedRead ? 'after_reload' : 'preserve', expected)], reason: 'Staff can adjust alarm thresholds.', sources },
       ];
       return call(turn, 'submit_plan', { plan: { summary: 'Station settings', roles: ['Staff'], testers, journeys, gaps: [],
         features: [{ id: 'settings', title: 'Station settings', description: 'Update station settings.', sources }] } });
@@ -323,7 +332,7 @@ describe('repository brain', () => {
       await expect(result).rejects.toThrow(/journeys share.*preserve an untouched field/i);
     } else {
       const check = (await result).plan.journeys[1].checks[1];
-      expect(check.phase).toBe('preserve');
+      expect(check.phase).toBe(fixedRead ? 'after_reload' : 'preserve');
       expect(check.expected).toBe(expected);
     }
   });

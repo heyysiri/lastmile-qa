@@ -61,13 +61,13 @@ const systemPrompt = [
   'Keep ALL checks in journey.checks. For return/resume state, prefer check.atStageStart naming the stage: it runs AFTER transition and BEFORE actor action, preventing retyping from faking persistence. Unmarked checks run at final journey end. Stage goals and behavioral background must not contain expected oracle values, citations or source instructions.',
   'Use small, fixed input values and user-facing goals. Keep source, success oracles and credentials out of tester descriptions and goals.',
   'The actor can fill or select only a supplied input slot exactly. Filling replaces the whole field; it cannot concatenate, interpolate, or append slot values. Supply the complete desired value for every editable field, not a prefix, suffix, or instruction to transform it. Keep lookup values in separate slots when needed.',
-  'Each feature and journey cites repository evidence. Every check cites the evidence for its chosen basis: requirement (including $brief or $requirements), test, or implementation. Treat implementation-only expectations as hypotheses.',
+  'Each journey with action inputs must cite application implementation source for the behavior it exercises, not only documentation or requirements. This source is needed to diagnose and repair failures. Each feature and journey cites repository evidence. Every check cites the evidence for its chosen basis: requirement (including $brief or $requirements), test, or implementation. Treat implementation-only expectations as hypotheses.',
   'Every sources array contains only returned citation IDs such as S1. Never reconstruct citation objects, hashes or excerpts. A check basis is requirement, test, or implementation, never a citation ID.',
   'Use visible, field, or text checks with exact observed role/name, label, text or source-backed test ID locators. Specify a readback route for after_reload and preserve. Use preserve for evidence of values that must remain unchanged.',
   'Checks describe the completed task or an explicitly marked stage entry. Prefer stable form labels with the desired value in expected; do not invent a locator from a future heading or confuse a field value with its accessible name. Input keys are simple identifiers without spaces.',
   'Unmarked after_action is evaluated once after ALL actor actions, on the final page. Do not require transient success banners or notifications that disappear on navigation or reload. The verifier handles persistence readbacks; prefer durable fields and state over confirmations.',
   'A fieldName observation is the exact HTML name of a visible form control. Use by: fieldName with that observed name when accessible labels are missing or ambiguous. Never infer a field name from a nearby label or source template.',
-  'Journeys run in the submitted order and can share application data across browser profiles and accounts. Preservation compares against the value frozen before any journey runs. Choose untouched controls and leave preserve.expected unset unless a requirement specifies a fixed value.',
+  'Journeys run in the submitted order and can share application data across browser profiles and accounts. Preservation compares against the value frozen before any journey runs. Choose untouched controls and leave preserve.expected unset unless a requirement specifies a fixed value. A value checked after a return stage may have been changed by earlier stages. Later journeys must not compare that same record to its old initial value. Order preservation checks before conflicting writes or use different records.',
   'For a release revisit earlier checks and explain coverage of changed files. Explain gaps when a role, route, control, or expectation cannot be corroborated.',
   'Use the available turns for a small executable plan. Once each tester has one viable task and a grounded check, call submit_plan and reserve turns for corrections. Explain remaining coverage as gaps.',
   'You have at most 18 model turns. Submit an initial plan within twelve turns, using the remaining turns to correct validation failures or gather missing evidence. Prefer a small executable plan with explicit gaps over exhaustive exploration. Group up to four useful routes in one observation call.',
@@ -426,6 +426,9 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
           unobservedRoutes ||= !observed(path).length;
         };
         if (!repositoryBacked(journey.sources)) issues.push(`Journey ${journey.id} requires a repository citation`);
+        if (Object.keys(journey.inputs).length && !journey.sources.some(ref => kinds.get(ref.path) === 'code')) {
+          issues.push(`Journey ${journey.id} needs an application implementation citation for its action inputs. Search/read the source implementing this workflow; documentation alone cannot support a repair.`);
+        }
         route(journey.entryPath, journey.sources);
         for (const stage of journey.stages ?? []) if (stage.entryPath) route(stage.entryPath, journey.sources);
         if (new Set(journey.checks.map(check => check.id)).size !== journey.checks.length) {
@@ -453,16 +456,19 @@ export function createRepositoryBrain(options: BrainOptions): DiscoverProject {
         {
           const inputs = new Set(Object.values(journey.inputs).map(String));
           const outputs = new Map<string, string>();
-          for (const { phase, kind, path, locator, expected, atStageStart } of journey.checks) {
-            if (phase === 'after_action' || kind === 'visible' || path === undefined) continue;
+          for (const { phase, kind, path: readbackPath, locator, expected, atStageStart } of journey.checks) {
+            const stageIndex = atStageStart ? (journey.stages ?? []).findIndex(stage => stage.id === atStageStart) : -1;
+            const returning = stageIndex > 0;
+            const path = readbackPath ?? (returning ? journey.stages![stageIndex].entryPath ?? journey.entryPath : undefined);
+            if ((phase === 'after_action' && !returning) || kind === 'visible' || path === undefined) continue;
             const target = hashValue({ principal: accountId ?? null, path, kind, locator });
             const value = expected === undefined ? undefined : String(expected);
-            if (phase === 'preserve') {
+            if (phase === 'preserve' || (value !== undefined && !inputs.has(value))) {
               const prior = priorOutputs.get(target);
               if (prior !== undefined && prior !== value) {
                 issues.push(`Journey ${journey.id}: journeys share a check target that an earlier journey plans to write. Preserve an untouched field or choose journeys with disjoint writes.`);
               }
-            } else if (!atStageStart && value !== undefined && inputs.has(value)) {
+            } else if ((!atStageStart || returning) && value !== undefined && inputs.has(value)) {
               outputs.set(target, value);
             }
           }
