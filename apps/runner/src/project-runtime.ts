@@ -237,7 +237,11 @@ export function createProjectRuntime(options:Options):ProjectRuntime&{replay:(pr
   if(prior.some(r=>r.journey.checks.some(c=>containsPrivateValue(c.expected,privateValues))))
    throw new Error('Prior coverage contains a private account value and cannot be published');
   let discovery=project.discovery;
-  if(!discovery||input.request.mode==='release'||discovery.index.version!==index.version){
+  const retain=project.github?.coverageMode==='retain'&&input.request.mode==='release'&&prior.length>0;
+  if(retain&&discovery){
+   const previous=previousRun?.discovery??discovery;
+   discovery={...previous,index:{version:index.version,sourceLines:index.sourceLines,excludedFiles:index.excludedFiles,indexedAt:index.indexedAt,changedPaths:index.changedPaths,fileCount:index.files.length},plan:{...previous.plan,journeys:[]},observations:[],modelCalls:0};
+  }else if(!discovery||input.request.mode==='release'||discovery.index.version!==index.version){
    run.phase='Refreshing the application map';onUpdate(run);
    try{
     discovery=await discover(project,secrets,message=>{run.phase=message;onUpdate(run);},discovery);

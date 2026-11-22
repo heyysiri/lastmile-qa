@@ -12,6 +12,7 @@ import {createOscarApplication} from './oscar-application';
 import {createRepairRuntime} from './repair-runtime';
 import {createOscarRepairAdapter} from './repair-oscar';
 import {createProjectRuntime} from './project-runtime';
+import {createProjectRepository} from './project-repository';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 config({ path: resolve(root, '.env'), quiet: true });
@@ -38,8 +39,10 @@ try {
     {kind:'code' as const,path:'apps/seller-demo/components/InventoryForm.tsx'},
   ]};
   const journey = createJourneyExecutor({prepareSession:createPersistentSessionPreparer({origin,testToken}),origin,artifactRoot,testToken,apiKey,model});
+  const projectRuntime=apiKey?createProjectRuntime({privateRoot:resolve(root,'.data/projects'),artifactRoot,apiKey,model}):undefined;
+  if(projectRuntime&&process.env.GITHUB_PAT)projectRuntime.repository=createProjectRepository({root:resolve(root,'.data/repositories'),token:process.env.GITHUB_PAT});
   const app = createServer({
-    projectRuntime:apiKey?createProjectRuntime({privateRoot:resolve(root,'.data/projects'),artifactRoot,apiKey,model}):undefined,
+    projectRuntime,
     repairRuntime: apiKey ? createRepairRuntime({root:applicationRoot,workspaceRoot:resolve(root,'.data/repairs'),
       sellerDatabasePath:resolve(root,oscar?(process.env.OSCAR_DATABASE_PATH||'.data/oscar.sqlite'):(process.env.SELLER_DATABASE_PATH||'.data/seller-demo.sqlite')),
       artifactRoot,origin,testToken,apiKey,model,defect:oscar?process.env.OSCAR_DEMO_DEFECT:process.env.SELLER_DEMO_DEFECT},
@@ -56,6 +59,7 @@ try {
     executeRun: journey,
     executeReplay: journey,
   });
+  app.addHook('onClose',async()=>{await projectRuntime?.repository?.close?.();});
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     process.once(signal, () => {
       void app.close().catch(() => { process.exitCode = 1; });

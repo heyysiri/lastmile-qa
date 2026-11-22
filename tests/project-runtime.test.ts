@@ -189,3 +189,17 @@ it('authenticates execution accounts without concurrent writes before freezing a
  expect(result.results.map(r=>r.run.verdict)).toEqual(['failed','passed']);
  expect(result.results.map(r=>r.checks[1].expected)).toEqual(['17','23']);
 },20000);
+
+it('retains users and frozen cases without regenerating coverage after an approved GitHub fix',async()=>{
+ const f=await fixture();const discover=vi.fn(async()=>{throw new Error('Coverage must not regenerate for a verified fix');});
+ const runtime=createProjectRuntime({privateRoot:join(f.root,'.private'),artifactRoot:join(f.root,'.artifacts'),model:'test',discover,actor:saveName});
+ const baseline=await runtime.execute(f.project,{accounts:[]},f.run,[],()=>{});
+ await writeFile(join(f.root,'implementation.ts'),'export const fixed = true;');f.setDefect(false);
+ // Restore the same precondition for this release; the application owns its durable state.
+ f.values.a.stock=17;
+ const project={...f.project,github:{repositoryUrl:'https://github.com/test/app',branch:'demo',setup:'custom' as const,entryPath:'/',coverageMode:'retain' as const,sha:'a'.repeat(40)}};
+ const released=await runtime.execute(project,{accounts:[]},{...f.run,id:'release-fixed',request:{requestId:'release-fixed',mode:'release'}},[],()=>{},baseline);
+ expect(discover).not.toHaveBeenCalled();expect(released.results.map(result=>result.tester)).toEqual(baseline.results.map(result=>result.tester));
+ expect(released.results.map(result=>result.journey)).toEqual(baseline.results.map(result=>result.journey));
+ expect(released.metrics.passed).toBe(2);expect(released.discovery?.index.version).not.toBe(baseline.discovery?.index.version);
+});
