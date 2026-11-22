@@ -29,6 +29,10 @@ beforeAll(async () => {
       return;
     }
     res.setHeader('content-type', 'text/html');
+    if (path === '/delayed-stock') {
+      res.end(`<p>Loading stock…</p><script>setTimeout(() => { document.body.innerHTML = '<label>Stock<input value="${stock}"></label>'; }, 3000)</script>`);
+      return;
+    }
     res.end(path === '/inventory' ? `
       <label for="stock">Stock</label><input id="stock" value="${stock}">
       <p data-testid="owner">  Test Store  </p>
@@ -200,3 +204,16 @@ it('rejects unsafe destinations and classifies uninspectable documents as not ev
   await page.close();
   expect((await verifyProjectChecks(page, [check('closed')], origin))[0].status).toBe('not_evaluated');
 });
+
+
+it('waits for a slow return form before reading its value without waiting for the expected value', async () => {
+  const network = { mode: 'throttled' as const, latencyMs: 800, downloadKbps: 1200, uploadKbps: 600 };
+  const expected = check('return-stock', { kind: 'field', locator: { by: 'label', value: 'Stock' }, expected: '009', atStageStart: 'return' });
+  await page.goto(`${origin}/delayed-stock`);
+  const passed = await verifyProjectChecks(page, [expected], origin, undefined, network);
+  expect(passed[0]).toMatchObject({ status: 'passed', actual: '009', atStageStart: 'return' });
+  stock = 'wrong';
+  await page.goto(`${origin}/delayed-stock`);
+  const failed = await verifyProjectChecks(page, [expected], origin, undefined, network);
+  expect(failed[0]).toMatchObject({ status: 'failed', actual: 'wrong', expected: '009' });
+}, 20000);

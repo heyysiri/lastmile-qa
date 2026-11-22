@@ -85,7 +85,7 @@ export function createProjectRuntime(options:Options):ProjectRuntime&{replay:(pr
   try{
    const stored=await sessions.loadPersona(project,tester);
    session=await createBrowserSession({pack:tester.context,inputs:{},origin:project.appUrl,allowedOrigins:project.allowedOrigins,storageState:stored,redactValues:privateValues,artifactDirectory:directory,signal,onStep:()=>{}});
-   const captured=await captureProjectChecks(session.page,needsCapture,new URL(project.appUrl).origin,signal);
+   const captured=await captureProjectChecks(session.page,needsCapture,new URL(project.appUrl).origin,signal,tester.context.network);
    for(const check of captured){
     if(containsPrivateValue(check.expected,privateValues)){
      unavailable.set(check.id,'The preserved value contains private account data');
@@ -106,6 +106,7 @@ export function createProjectRuntime(options:Options):ProjectRuntime&{replay:(pr
   const signal=AbortSignal.timeout(180000),privateValues=sessions.privateValues(secrets).filter(Boolean);
   const completedActions:RecordedAction[]=[];
   let storage=stored,segment=0,segmentDirectory=directory,segmentPrefix='';
+  let activeNetwork=tester.context.network;
   const actionCount=()=>completedActions.length+(session?.actions.length??0);
   const open=async(network:ProjectTester['context']['network'])=>{
    segmentPrefix=journey.stages?`visit-${++segment}-`:'';
@@ -138,7 +139,7 @@ export function createProjectRuntime(options:Options):ProjectRuntime&{replay:(pr
    }
   };
   const verify=async(selected:ProjectCheck[])=>{
-   checks.push(...await verifyProjectChecks(session!.page,selected.filter(c=>!unavailable.has(c.id)),new URL(project.appUrl).origin,signal));
+   checks.push(...await verifyProjectChecks(session!.page,selected.filter(c=>!unavailable.has(c.id)),new URL(project.appUrl).origin,signal,activeNetwork));
   };
   try{
    if(blocked)throw new Error(blocked);
@@ -159,6 +160,7 @@ export function createProjectRuntime(options:Options):ProjectRuntime&{replay:(pr
      signal.throwIfAborted();
      if(!original&&run.evidence.modelCalls>=20)throw new Error('Journey model call budget exhausted');
      network=stage.network??network;
+     activeNetwork=network;
      let destination=stage.entryPath;
      if(session&&stage.transition==='reopen'){
       destination??=routeIdentity(session.page.url());storage=await session.storageState();await close();

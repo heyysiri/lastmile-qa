@@ -1,11 +1,18 @@
 import { errors, type Page } from 'playwright';
 import type { ProjectCheck, ProjectCheckResult } from '@lastmile/contracts/projects';
+import type { NetworkProfile } from '@lastmile/contracts';
 import { fieldNameLocator } from './field-locator';
 
 const TOTAL_TIMEOUT_MS = 15_000;
 const LOCATOR_TIMEOUT_MS = 2_000;
 
-type Budget = { deadline: number; signal?: AbortSignal };
+type Budget = { deadline: number; locatorTimeoutMs: number; signal?: AbortSignal };
+function verificationBudget(signal?: AbortSignal, network?: NetworkProfile): Budget {
+  // Emulated slow connections delay both the document and client-rendered forms.
+  // Wait for the control to exist, then read once; never wait for a value to become correct.
+  const slow = network?.mode === 'throttled' || network?.mode === 'request_delay';
+  return { deadline: performance.now() + (slow ? 60_000 : TOTAL_TIMEOUT_MS), locatorTimeoutMs: slow ? 15_000 : LOCATOR_TIMEOUT_MS, signal };
+}
 class CheckUnavailable extends Error {}
 
 function ready(page: Page, { deadline, signal }: Budget): number {
@@ -81,7 +88,7 @@ async function observe(page: Page, check: ProjectCheck, origin: string, budget: 
   const match = locate(page, check.locator).filter({ visible: true });
   try {
     const value = await bounded(page, budget, async remaining => {
-      const timeout = Math.min(remaining, LOCATOR_TIMEOUT_MS);
+      const timeout = Math.min(remaining, budget.locatorTimeoutMs);
       switch (check.kind) {
         case 'visible': await match.waitFor({ state: 'visible', timeout }); return true;
         case 'field': return match.inputValue({ timeout });
@@ -104,8 +111,8 @@ function unavailableMessage(error: unknown): string {
   return 'Page could not be inspected';
 }
 
-export async function captureProjectChecks(page: Page, checks: ProjectCheck[], origin: string, signal?: AbortSignal): Promise<ProjectCheck[]> {
-  const budget = { deadline: performance.now() + TOTAL_TIMEOUT_MS, signal };
+export async function captureProjectChecks(page: Page, checks: ProjectCheck[], origin: string, signal?: AbortSignal, network?: NetworkProfile): Promise<ProjectCheck[]> {
+  const budget = verificationBudget(signal, network);
   const captured: ProjectCheck[] = [];
   for (const check of checks) {
     if (check.phase !== 'preserve' || check.expected !== undefined) {
@@ -127,8 +134,8 @@ export async function captureProjectChecks(page: Page, checks: ProjectCheck[], o
   return captured;
 }
 
-export async function verifyProjectChecks(page: Page, checks: ProjectCheck[], origin: string, signal?: AbortSignal): Promise<ProjectCheckResult[]> {
-  const budget = { deadline: performance.now() + TOTAL_TIMEOUT_MS, signal };
+export async function verifyProjectChecks(page: Page, checks: ProjectCheck[], origin: string, signal?: AbortSignal, network?: NetworkProfile): Promise<ProjectCheckResult[]> {
+  const budget = verificationBudget(signal, network);
   const originalUrl = page.url();
   const results: ProjectCheckResult[] = [];
   const entries = [...checks.entries()];
