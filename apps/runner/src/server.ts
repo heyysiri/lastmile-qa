@@ -24,6 +24,8 @@ import type {ProjectRuntime} from '@lastmile/contracts/projects';
 import type { GitHubCredentials } from './github-credentials';
 
 export type ServerOptions = {
+  startOnReady?: boolean;
+  projectsOnly?: boolean;
   githubCredentials?: GitHubCredentials;
   projectRuntime?: ProjectRuntime;
   databasePath: string;
@@ -228,7 +230,7 @@ export function createServer(options: ServerOptions) {
     active = Promise.resolve().then(drain);
   }
 
-  app.addHook('onListen', async () => {
+  app.addHook(options.startOnReady ? 'onReady' : 'onListen', async () => {
     store.recoverInterrupted();
     startWorker();
   });
@@ -239,8 +241,17 @@ export function createServer(options: ServerOptions) {
   app.addHook('onClose', async () => { store.close(); });
 
   app.addHook('onRequest', async (request, reply) => {
+    if (request.headers['x-lastmile-user-id'] !== undefined) return reply.code(409).send({ code: 'workspace_mode_mismatch', message: 'Private workspace requests require the authenticated workspace gateway.' });
     const path = (request.routeOptions.url ?? request.url).split('?')[0];
     if (!path.startsWith('/api/') || path === '/api/health') return;
+    if (options.projectsOnly) {
+      const projectRoute = /^\/api\/(?:projects|project-runs|project-repairs)(?:\/|$)/.test(path);
+      const allowed = projectRoute || path === '/api/settings/github' || path === '/api/capabilities'
+        || (request.method === 'GET' && /^\/api\/runs(?:\/|$)/.test(path));
+      if (!allowed || (request.method === 'POST' && path === '/api/projects')) {
+        return reply.code(403).send({ code: 'private_workspace', message: 'Use a GitHub project in your private workspace. Shared demos and server filesystem connections are local-only.' });
+      }
+    }
     const authorization = request.headers.authorization;
     const origin = request.headers.origin;
     if (!authorization || !timingSafeEqual(digest(authorization), expectedAuth) ||

@@ -2,6 +2,8 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from 'dotenv';
 import { createServer } from './server';
+import { createTenantServer } from './tenant-server';
+import { createPrivateWorkspace } from './private-workspace';
 import { createJourneyExecutor } from './journey';
 import { createApplications, validateApplicationInputValues } from './applications';
 import { createStudyGenerator } from './study-generator';
@@ -19,6 +21,22 @@ const root = fileURLToPath(new URL('../../../', import.meta.url));
 config({ path: resolve(root, '.env'), quiet: true });
 
 try {
+  const privateMode = process.env.LASTMILE_AUTH === 'clerk' || Boolean(process.env.CLERK_SECRET_KEY);
+  if (process.env.DASHBOARD_ORIGIN && !privateMode) throw new Error('Hosted dashboard requires Clerk authentication');
+  if (privateMode) {
+    const apiToken = process.env.RUNNER_API_TOKEN ?? '';
+    const app = createTenantServer({
+      root: resolve(root, '.data/workspaces'), apiToken,
+      createWorkspace: directory => createPrivateWorkspace({
+        directory, apiToken, model: process.env.OPENAI_MODEL,
+        // Hosted execution must use isolated workers before it can run untrusted repository scripts.
+        apiKey: process.env.DASHBOARD_ORIGIN ? undefined : process.env.OPENAI_API_KEY,
+      }),
+    });
+    for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => { void app.close().catch(() => { process.exitCode = 1; }); });
+    const address = await app.listen({ host: '127.0.0.1', port: Number(process.env.RUNNER_PORT || 4000) });
+    console.log(`Private workspace runner listening at ${address}`);
+  } else {
   const oscar=process.env.LASTMILE_APPLICATION==='oscar';
   const origin=oscar?(process.env.OSCAR_URL||'http://127.0.0.1:8000'):(process.env.SELLER_DEMO_URL||'http://127.0.0.1:3001');
   const testToken=process.env.TEST_API_TOKEN||'local-development-test';
@@ -70,6 +88,7 @@ try {
   }
   const address = await app.listen({ host: '127.0.0.1', port: Number(process.env.RUNNER_PORT || 4000) });
   console.log(`Runner listening at ${address}`);
+  }
 } catch {
   console.error('Runner could not start. Check its configuration and port.');
   process.exitCode = 1;

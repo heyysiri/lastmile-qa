@@ -191,3 +191,11 @@
   .project-disclosure[open] > :not(summary) { animation: studio-fade 180ms ease-out; }
   .project-publication[data-state="opened"] { animation: studio-fade 220ms ease-out; }
 }
+
+.workspace-account { margin-left: auto; display: flex; align-items: center; gap: 18px; }
+.auth-page { min-height: 100dvh; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 64px; max-width: 1080px; margin: auto; padding: 48px 32px; }
+.auth-wordmark { font-size: 23px; font-weight: 800; letter-spacing: -.06em; }
+.auth-intro h1 { font-size: clamp(40px, 5vw, 66px); line-height: 1.04; letter-spacing: -.06em; margin: 36px 0 24px; }
+.auth-intro p { max-width: 360px; line-height: 1.7; color: var(--muted); }
+.auth-loading { min-height: 100dvh; display: grid; place-items: center; }
+@media (max-width: 760px) { .auth-page { grid-template-columns: 1fr; justify-items: center; gap: 28px; padding: 32px 20px; } .auth-intro { text-align: center; } .auth-intro h1 { margin: 22px 0 16px; } }

@@ -43,17 +43,23 @@ export function resolveProxyTarget(method: string, segments: readonly string[]):
   return null;
 }
 
-// The local dashboard is served on port 3000. Do not trust client-supplied
-// Host/Origin pairs merely because they agree with each other.
-const DASHBOARD_ORIGINS = ['http://localhost:3000', 'http://127.0.0.1:3000'];
+// Trust an explicit deployment origin, never arbitrary client-supplied Host/Origin pairs.
+function dashboardOrigins(): string[] {
+  const configured = process.env.DASHBOARD_ORIGIN?.trim();
+  if (!configured) return ['http://localhost:3000', 'http://127.0.0.1:3000'];
+  const url = URL.parse(configured);
+  if (!url || url.protocol !== 'https:' || url.username || url.password ||
+      url.pathname !== '/' || url.search || url.hash) return [];
+  return [url.origin];
+}
 
 export function isTrustedDashboardHost(headers: Headers): boolean {
   const host = headers.get('host');
-  return DASHBOARD_ORIGINS.some(origin => new URL(origin).host === host);
+  return dashboardOrigins().some(origin => new URL(origin).host === host);
 }
 
 export function isSameOriginWrite(headers: Headers): boolean {
   const origin = headers.get('origin');
-  return origin !== null && DASHBOARD_ORIGINS.includes(origin)
+  return origin !== null && dashboardOrigins().includes(origin)
     && new URL(origin).host === headers.get('host');
 }
