@@ -58,6 +58,7 @@ class FakeGitHub {
   redirectRepo = false;
   leakTokenOnError = false;
   pushAllowed = true;
+  refRejections = 0;
   server!: Server;
   origin = '';
 
@@ -166,6 +167,7 @@ class FakeGitHub {
     }
     if (method === 'POST' && rest === 'git/commits') return send(201, { sha: this.commit(body.tree, body.parents, body.message), tree: { sha: body.tree }, parents: body.parents.map((sha: string) => ({ sha })) });
     if (method === 'POST' && rest === 'git/refs') {
+      if (this.refRejections-- > 0) return send(422, { message: `Reference update failed ${token}` });
       if (this.refs.has(body.ref)) return send(422, { message: 'Reference already exists' });
       this.refs.set(body.ref, body.sha);
       return send(201, { ref: body.ref, object: { sha: body.sha, type: 'commit' } });
@@ -306,6 +308,24 @@ describe('publishVerifiedPatch', () => {
     // An open PR against an advanced base must not retain a stale verified label.
     fake.advance('main', 'README.md', '# moved\n');
     await expectCode(client.publishVerifiedPatch(publishInput(appPatch(), { baseSha: first.baseSha })), 'stale_base');
+  });
+
+  it('recovers a rejected reference creation with the same commit and a bounded retry', async () => {
+    fake.refRejections = 1;
+    const result = await clientFor().publishVerifiedPatch(publishInput());
+    expect(fake.pulls).toHaveLength(1);
+    expect(fake.tip(result.branch)).toBe(result.headSha);
+    expect(fake.count('POST /repos/heyysiri/vendure/git/refs')).toBe(2);
+    expect(fake.count('POST /repos/heyysiri/vendure/git/commits')).toBe(1);
+  });
+
+  it('stops reference retries and reports a redacted GitHub reason without opening a PR', async () => {
+    fake.refRejections = 10;
+    const error = await expectCode(clientFor().publishVerifiedPatch(publishInput()), 'api_error');
+    expect(error.message).toContain('Reference update failed [redacted]');
+    expect(fake.count('POST /repos/heyysiri/vendure/git/refs')).toBe(3);
+    expect(fake.count('POST /repos/heyysiri/vendure/git/commits')).toBe(1);
+    expect(fake.pulls).toHaveLength(0);
   });
 
   it('recovers after a crash between pushing the branch and opening the PR without creating a second commit', async () => {

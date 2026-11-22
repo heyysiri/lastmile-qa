@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { lstat, mkdir, mkdtemp, readdir, realpath, rename, rm, rmdir } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
+import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
 import { PatchProposalSchema, type PatchProposal } from '@lastmile/contracts/evolution';
 import { hashValue } from './artifacts';
@@ -286,14 +287,22 @@ export function createGitHubRepositoryClient({ token, apiOrigin = defaultApiOrig
       const tree = parse(TreeSchema, (await call('POST', `${target(repo)}/git/trees`, { body: { base_tree: baseCommit.tree.sha, tree: entries }, signal })).data, 'tree');
       const message = `${input.title.trim()}\n\n${summary}\n\nlastmile repair ${input.repairId}\npatch ${hash}`;
       const commit = parse(CommitSchema, (await call('POST', `${target(repo)}/git/commits`, { body: { message, tree: tree.sha, parents: [baseSha] }, signal })).data, 'commit');
-      const created = await call('POST', `${target(repo)}/git/refs`, { body: { ref: `refs/heads/${branch}`, sha: commit.sha }, allow: [422], signal });
-      if (created.status === 422) {
-        // Lost a race with a concurrent identical publish: accept only the same verified content.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const created = await call('POST', `${target(repo)}/git/refs`, { body: { ref: `refs/heads/${branch}`, sha: commit.sha }, allow: [422], signal });
+        if (created.status !== 422) { headSha = commit.sha; break; }
+        // A concurrent or delayed creation can recover only to the exact patch.
         const raced = await readRef(repo, branch, signal);
-        if (!raced) throw new GitHubTransportError('api_error', 'GitHub rejected the repair branch');
-        await verifyBranchCommit(repo, baseSha, raced.sha, changes, signal);
-        headSha = raced.sha;
-      } else headSha = commit.sha;
+        if (raced) {
+          await verifyBranchCommit(repo, baseSha, raced.sha, changes, signal);
+          headSha = raced.sha; break;
+        }
+        if (attempt === 2) {
+          const message = (created.data as { message?: unknown } | undefined)?.message;
+          const detail = typeof message === 'string' ? `: ${redact(message).slice(0, 200)}` : '';
+          throw new GitHubTransportError('api_error', `GitHub rejected the repair branch${detail}`, 422);
+        }
+        await delay(500 * (attempt + 1), undefined, { signal });
+      }
     }
 
     if ((await readRef(repo, input.baseBranch, signal))?.sha !== baseSha) throw new GitHubTransportError('stale_base', 'The base branch moved during publication; sync and test the new revision');
