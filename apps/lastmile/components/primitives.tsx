@@ -15,7 +15,16 @@ export function DialogContent({ title, description, children }: {
   const content = useRef<HTMLDivElement>(null);
   return <DialogPrimitive.Portal>
     <DialogPrimitive.Overlay className="dialog-overlay" />
-    <DialogPrimitive.Content ref={content} className="dialog-content studio" onOpenAutoFocus={event => {
+    <DialogPrimitive.Content ref={content} className="dialog-content studio" onKeyDownCapture={event => {
+      if (event.key !== 'Tab') return;
+      const controls = [...(content.current?.querySelectorAll<HTMLElement>('a[href],button,input,select,textarea,summary,[tabindex]') ?? [])]
+        .filter(element => element.getClientRects().length && !element.matches(':disabled,[role="tablist"]')
+          && (element.tabIndex >= 0 || element.matches('[role="tab"][aria-selected="true"]')));
+      const first = controls[0], last = controls.at(-1);
+      if (first && last && ((event.shiftKey && document.activeElement === first) || (!event.shiftKey && document.activeElement === last))) {
+        event.preventDefault(); event.stopPropagation(); (event.shiftKey ? last : first).focus();
+      }
+    }} onOpenAutoFocus={event => {
       // Start on the first field instead of the connection tabs.
       const field = content.current?.querySelector<HTMLElement>('[data-autofocus]');
       if (field) { event.preventDefault(); field.focus(); }
@@ -32,7 +41,7 @@ export function DialogContent({ title, description, children }: {
 
 export const Tabs = TabsPrimitive.Root;
 export function TabsList({ children, label = 'Project workspace' }: { children: ReactNode; label?: string }) {
-  return <TabsPrimitive.List className="workspace-tabs" aria-label={label} tabIndex={-1}>{children}</TabsPrimitive.List>;
+  return <TabsPrimitive.List className="workspace-tabs" aria-label={label}>{children}</TabsPrimitive.List>;
 }
 export function TabsTrigger(props: ComponentProps<typeof TabsPrimitive.Trigger>) {
   return <TabsPrimitive.Trigger {...props} className="workspace-tab" />;
